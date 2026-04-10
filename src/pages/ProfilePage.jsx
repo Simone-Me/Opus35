@@ -8,6 +8,13 @@ import {
   removeUserLogCategory,
   upsertUserLogCategory,
 } from "../services/logService";
+import {
+  deleteProfileNote,
+  getProfileNotes,
+  insertProfileNote,
+} from "../services/noteService";
+
+const NOTE_MAX_LENGTH = 500;
 
 function getComposerName(work) {
   const composer = work?.composers;
@@ -22,8 +29,12 @@ function getComposerName(work) {
 function ProfilePage() {
   const { user } = useOutletContext();
   const [logs, setLogs] = useState([]);
+  const [notes, setNotes] = useState([]);
+  const [noteDraft, setNoteDraft] = useState("");
   const [activeTab, setActiveTab] = useState("all");
   const [isLoading, setIsLoading] = useState(false);
+  const [isNotesLoading, setIsNotesLoading] = useState(false);
+  const [isSavingNote, setIsSavingNote] = useState(false);
   const [error, setError] = useState("");
   const [modalState, setModalState] = useState({
     isOpen: false,
@@ -37,18 +48,26 @@ function ProfilePage() {
     async function loadLogs() {
       if (!user?.id) {
         setLogs([]);
+        setNotes([]);
         return;
       }
 
       setIsLoading(true);
+      setIsNotesLoading(true);
 
       try {
-        const data = await getUserLogs(user.id);
-        setLogs(data);
+        const [logsData, notesData] = await Promise.all([
+          getUserLogs(user.id),
+          getProfileNotes(user.id),
+        ]);
+
+        setLogs(logsData);
+        setNotes(notesData);
       } catch (loadError) {
         setError(loadError.message);
       } finally {
         setIsLoading(false);
+        setIsNotesLoading(false);
       }
     }
 
@@ -56,6 +75,10 @@ function ProfilePage() {
   }, [user?.id]);
 
   const rows = useMemo(() => {
+    if (activeTab === "notes") {
+      return [];
+    }
+
     const expandedRows = [];
 
     logs.forEach((log) => {
@@ -93,6 +116,15 @@ function ProfilePage() {
 
     const data = await getUserLogs(user.id);
     setLogs(data);
+  }
+
+  async function refreshNotes() {
+    if (!user?.id) {
+      return;
+    }
+
+    const data = await getProfileNotes(user.id);
+    setNotes(data);
   }
 
   async function handleDelete(row) {
@@ -134,6 +166,58 @@ function ProfilePage() {
       await refreshLogs();
     } catch (saveError) {
       setError(saveError.message);
+    }
+  }
+
+  async function handleAddNote(event) {
+    event.preventDefault();
+
+    if (!user?.id) {
+      return;
+    }
+
+    const normalizedNote = noteDraft.trim();
+
+    if (!normalizedNote) {
+      setError("Write a note before saving.");
+      return;
+    }
+
+    if (normalizedNote.length > NOTE_MAX_LENGTH) {
+      setError("Note must be 500 characters or fewer.");
+      return;
+    }
+
+    setError("");
+    setIsSavingNote(true);
+
+    try {
+      await insertProfileNote({
+        userId: user.id,
+        note: normalizedNote,
+      });
+      setNoteDraft("");
+      await refreshNotes();
+    } catch (saveError) {
+      setError(saveError.message);
+    } finally {
+      setIsSavingNote(false);
+    }
+  }
+
+  async function handleDeleteNote(noteId) {
+    if (!user?.id) {
+      return;
+    }
+
+    try {
+      await deleteProfileNote({
+        userId: user.id,
+        noteId,
+      });
+      await refreshNotes();
+    } catch (deleteError) {
+      setError(deleteError.message);
     }
   }
 
@@ -190,7 +274,65 @@ function ProfilePage() {
 
       {error && <div className="alert error">{error}</div>}
 
-      {isLoading ? (
+      {activeTab === "notes" ? (
+        <section className="profile-notes-section">
+          <h2>Personal notes</h2>
+          <p className="text-muted">
+            Add quick private notes (up to 500 characters).
+          </p>
+
+          <form className="profile-note-form" onSubmit={handleAddNote}>
+            <textarea
+              className="textarea"
+              maxLength={NOTE_MAX_LENGTH}
+              placeholder="Write your note here"
+              value={noteDraft}
+              onChange={(event) => setNoteDraft(event.target.value)}
+            />
+            <div className="profile-note-form-row">
+              <span className="text-muted">
+                {noteDraft.trim().length}/{NOTE_MAX_LENGTH}
+              </span>
+              <button
+                className="btn btn-small"
+                type="submit"
+                disabled={isSavingNote}
+              >
+                {isSavingNote ? "Saving..." : "Add note"}
+              </button>
+            </div>
+          </form>
+
+          {isNotesLoading ? (
+            <div className="table-skeleton">
+              <div className="skeleton skeleton-line" />
+              <div className="skeleton skeleton-line" />
+            </div>
+          ) : notes.length === 0 ? (
+            <p className="text-muted">No personal notes yet.</p>
+          ) : (
+            <ul className="profile-notes-list">
+              {notes.map((note) => (
+                <li className="profile-note-item" key={note.id}>
+                  <p>{note.note}</p>
+                  <div className="profile-note-meta">
+                    <span className="text-muted">
+                      Updated {format(new Date(note.updated_at), "yyyy-MM-dd")}
+                    </span>
+                    <button
+                      className="btn btn-small"
+                      onClick={() => handleDeleteNote(note.id)}
+                      type="button"
+                    >
+                      Delete note
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : isLoading ? (
         <div className="table-skeleton">
           <div className="skeleton skeleton-line" />
           <div className="skeleton skeleton-line" />

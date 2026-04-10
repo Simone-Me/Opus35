@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useOutletContext } from "react-router-dom";
+import IconStreamlineUltimateInformationCircleBold from "~icons/streamline-ultimate/information-circle-bold";
 import { getWorksIndex } from "../services/catalogService";
+import {
+  generateDailyRecommendation,
+  getDailyRecommendation,
+} from "../services/recommendationService";
 
 const SORTABLE_COLUMNS = {
   title: "title",
@@ -14,6 +19,7 @@ function normalizeValue(value) {
 }
 
 function ZibaldonePage() {
+  const { user } = useOutletContext();
   const [works, setWorks] = useState([]);
   const [query, setQuery] = useState("");
   const [epochFilter, setEpochFilter] = useState("all");
@@ -23,6 +29,10 @@ function ZibaldonePage() {
   const [sortBy, setSortBy] = useState(SORTABLE_COLUMNS.title);
   const [sortDirection, setSortDirection] = useState("asc");
   const [isLoading, setIsLoading] = useState(true);
+  const [isRecommendationLoading, setIsRecommendationLoading] = useState(false);
+  const [isGeneratingRecommendation, setIsGeneratingRecommendation] =
+    useState(false);
+  const [dailyRecommendation, setDailyRecommendation] = useState(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -43,8 +53,55 @@ function ZibaldonePage() {
   }, []);
 
   useEffect(() => {
+    async function loadDailyRecommendation() {
+      if (!user?.id) {
+        setDailyRecommendation(null);
+        return;
+      }
+
+      setIsRecommendationLoading(true);
+
+      try {
+        const recommendation = await getDailyRecommendation({
+          userId: user.id,
+        });
+        setDailyRecommendation(recommendation);
+      } catch (recommendationError) {
+        setError(recommendationError.message);
+      } finally {
+        setIsRecommendationLoading(false);
+      }
+    }
+
+    loadDailyRecommendation();
+  }, [user?.id]);
+
+  useEffect(() => {
     setPage(1);
   }, [query, epochFilter, genreFilter, pageSize, sortBy, sortDirection]);
+
+  async function handleGenerateRecommendation() {
+    if (!user?.id) {
+      setError("Sign in to generate your daily recommendation.");
+      return;
+    }
+
+    setError("");
+    setIsGeneratingRecommendation(true);
+
+    try {
+      const { recommendation } = await generateDailyRecommendation({
+        userId: user.id,
+        works,
+      });
+
+      setDailyRecommendation(recommendation);
+    } catch (generationError) {
+      setError(generationError.message);
+    } finally {
+      setIsGeneratingRecommendation(false);
+    }
+  }
 
   const availableEpochs = useMemo(() => {
     const values = new Set();
@@ -150,7 +207,53 @@ function ZibaldonePage() {
             Flat index of all pieces with sorting, filters, and pagination.
           </p>
         </div>
+
+        <div className="recommendation-actions">
+          <button
+            className="btn"
+            type="button"
+            onClick={handleGenerateRecommendation}
+            disabled={
+              isGeneratingRecommendation || isLoading || works.length === 0
+            }
+          >
+            {isGeneratingRecommendation
+              ? "Generating..."
+              : "Random recommendation"}
+          </button>
+          <span
+            className="recommendation-info-icon"
+            title="It can be generated only once per day. The same recommendation is shown until 23:59."
+            aria-label="Daily recommendation info"
+          >
+            <IconStreamlineUltimateInformationCircleBold
+              aria-hidden="true"
+              height="18"
+              width="18"
+            />
+          </span>
+        </div>
       </div>
+
+      {isRecommendationLoading ? (
+        <p className="text-muted">Loading your daily recommendation...</p>
+      ) : dailyRecommendation?.work ? (
+        <section className="daily-recommendation-card">
+          <h2>Today recommendation</h2>
+          <p>
+            <strong>{dailyRecommendation.work.title}</strong>
+            {" · "}
+            {dailyRecommendation.work.composer?.complete_name ||
+              dailyRecommendation.work.composer?.name ||
+              "Unknown composer"}
+          </p>
+          <p className="text-muted">
+            Date: {dailyRecommendation.work.publication_year || "TBD"}
+          </p>
+        </section>
+      ) : (
+        <p className="text-muted">No recommendation generated today yet.</p>
+      )}
 
       <div className="zibaldone-toolbar">
         <input

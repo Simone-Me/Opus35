@@ -70,7 +70,7 @@ function BrowsePage() {
     <main className="page">
       <div className="page-header">
         <div>
-          <h1>Browse composers</h1>
+          <h1>Composers</h1>
           <p className="text-muted">
             Lightweight home view. Open each composer to see full opus details.
           </p>
@@ -114,15 +114,28 @@ function BrowsePage() {
       ) : (
         <section className="composer-grid">
           {filteredCatalog.map((composer) => (
-            <article className="composer-card" key={composer.id}>
-              <h2 className="composer-title">{composer.name}</h2>
-              <p className="composer-meta">
-                {composer.epoch || "Unknown period"}
-              </p>
+            <article
+              className="composer-card composer-card-row"
+              key={composer.id}
+            >
+              <div className="composer-card-main">
+                <h2 className="composer-title">{composer.name}</h2>
+                <p className="composer-meta">
+                  {composer.epoch || "Unknown period"}
+                </p>
+              </div>
 
               <div className="composer-card-actions">
-                <Link className="btn" to={`/composer/${composer.id}`}>
-                  Open composer page
+                <Link
+                  aria-label={`Open ${composer.name} page`}
+                  className="btn"
+                  to={`/composer/${composer.id}`}
+                >
+                  <IconStreamlineUltimateArrowThickRightBottomCorner3
+                    aria-hidden="true"
+                    height="18"
+                    width="18"
+                  />
                 </Link>
               </div>
             </article>

@@ -21,6 +21,21 @@ function toInteger(value) {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+function extractPublicationYear(...values) {
+  const text = values
+    .filter(Boolean)
+    .map((value) => String(value))
+    .join(" ");
+
+  const match = text.match(/\b(1[0-9]{3}|20[0-9]{2})\b/);
+
+  if (!match) {
+    return null;
+  }
+
+  return toInteger(match[1]);
+}
+
 function chunkArray(items, size) {
   const chunks = [];
   for (let index = 0; index < items.length; index += size) {
@@ -110,7 +125,8 @@ async function seed() {
           openopus_id: openopusWorkId,
           title: work.title,
           genre: work.genre || null,
-          popularity: toInteger(work.popularity),
+          publication_year: extractPublicationYear(work.title, work.subtitle),
+          popularity: toInteger(work.popular),
         });
       });
     } catch (error) {

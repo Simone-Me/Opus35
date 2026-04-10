@@ -1,5 +1,7 @@
 import { hasSupabaseCredentials, supabase } from "../lib/supabaseClient";
 
+const WORKS_INDEX_BATCH_SIZE = 1000;
+
 function normalizeComposerLink(composerValue) {
   if (Array.isArray(composerValue)) {
     return composerValue[0] || null;
@@ -15,7 +17,7 @@ export async function getComposerCatalog() {
 
   const { data, error } = await supabase
     .from("composers")
-    .select("id,name,epoch,bio,portrait_url,wikipedia_url")
+    .select("id,name,complete_name,epoch,bio,portrait_url,wikipedia_url")
     .order("name", { ascending: true });
 
   if (error) {
@@ -71,7 +73,9 @@ export async function getWorksByComposerId(composerId) {
 
   const { data, error } = await supabase
     .from("works")
-    .select("id,title,genre,popularity,openopus_id,composer_id")
+    .select(
+      "id,title,genre,publication_year,popularity,openopus_id,composer_id",
+    )
     .eq("composer_id", composerId)
     .order("title", { ascending: true });
 
@@ -87,16 +91,38 @@ export async function getWorksIndex() {
     return [];
   }
 
-  const { data, error } = await supabase
-    .from("works")
-    .select("id,title,genre,popularity,openopus_id,composers(id,name,epoch)")
-    .order("title", { ascending: true });
+  const rows = [];
+  let offset = 0;
 
-  if (error) {
-    throw error;
+  while (true) {
+    const { data, error } = await supabase
+      .from("works")
+      .select(
+        "id,title,genre,publication_year,popularity,openopus_id,composers(id,name,complete_name,epoch)",
+      )
+      .order("title", { ascending: true })
+      .range(offset, offset + WORKS_INDEX_BATCH_SIZE - 1);
+
+    if (error) {
+      throw error;
+    }
+
+    const chunk = data || [];
+
+    if (chunk.length === 0) {
+      break;
+    }
+
+    rows.push(...chunk);
+
+    if (chunk.length < WORKS_INDEX_BATCH_SIZE) {
+      break;
+    }
+
+    offset += WORKS_INDEX_BATCH_SIZE;
   }
 
-  return (data || []).map((work) => ({
+  return rows.map((work) => ({
     ...work,
     composer: normalizeComposerLink(work.composers),
   }));

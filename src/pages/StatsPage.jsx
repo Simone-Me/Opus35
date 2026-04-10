@@ -152,7 +152,7 @@ function StatsPage() {
   if (!user) {
     return (
       <main className="page">
-        <h1>Charts & stats</h1>
+        <h1>Discover</h1>
         <p className="text-muted">Sign in to see your listening analytics.</p>
       </main>
     );
@@ -162,7 +162,7 @@ function StatsPage() {
     <main className="page">
       <div className="page-header">
         <div>
-          <h1>Charts & stats</h1>
+          <h1>Discover</h1>
           <p className="text-muted">
             Most listened composers and favorite periods.
           </p>

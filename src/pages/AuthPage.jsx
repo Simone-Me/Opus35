@@ -4,10 +4,91 @@ import { hasSupabaseCredentials, supabase } from "../lib/supabaseClient";
 
 const PASSWORD_MIN_LENGTH = 12;
 const SPECIAL_CHARACTER_REGEX = /[^A-Za-z0-9]/;
+const EMAIL_RATE_LIMIT_PER_HOUR = 2;
 
 function getInitialMode(searchParams) {
   const mode = searchParams.get("mode");
   return mode === "signup" ? "signup" : "login";
+}
+
+function getRetryDelayMsFromMessage(message) {
+  if (!message) {
+    return null;
+  }
+
+  const retryAfterMatch = message.match(
+    /retry[-\s]?after[:=\s]+(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hour|hours)?/i,
+  );
+
+  if (retryAfterMatch) {
+    const amount = Number(retryAfterMatch[1]);
+    const unit = (retryAfterMatch[2] || "seconds").toLowerCase();
+
+    if (Number.isFinite(amount) && amount > 0) {
+      if (["h", "hr", "hour", "hours"].includes(unit)) {
+        return amount * 60 * 60 * 1000;
+      }
+
+      if (["m", "min", "mins", "minute", "minutes"].includes(unit)) {
+        return amount * 60 * 1000;
+      }
+
+      return amount * 1000;
+    }
+  }
+
+  const afterMatch = message.match(
+    /after\s+(\d+)\s*(seconds?|minutes?|hours?)/i,
+  );
+
+  if (!afterMatch) {
+    return null;
+  }
+
+  const amount = Number(afterMatch[1]);
+  const unit = afterMatch[2].toLowerCase();
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return null;
+  }
+
+  if (unit.startsWith("hour")) {
+    return amount * 60 * 60 * 1000;
+  }
+
+  if (unit.startsWith("minute")) {
+    return amount * 60 * 1000;
+  }
+
+  return amount * 1000;
+}
+
+function isEmailRateLimitError(error) {
+  const combined = [error?.message, error?.code, error?.name, error?.status]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    combined.includes("rate limit") ||
+    combined.includes("too many requests") ||
+    combined.includes("over_email_send_rate_limit") ||
+    combined.includes("security purposes you can only request this after")
+  );
+}
+
+function getEmailRateLimitMessage(actionLabel, error) {
+  const retryDelayMs = getRetryDelayMsFromMessage(error?.message || "");
+  const preciseTimeMessage = retryDelayMs
+    ? ` Come back after ${new Date(
+        Date.now() + retryDelayMs,
+      ).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })}.`
+    : " Please come back later.";
+
+  return `Email could not be sent because the Supabase limit (${EMAIL_RATE_LIMIT_PER_HOUR}/hour) was reached while trying to ${actionLabel}.${preciseTimeMessage}`;
 }
 
 function AuthPage() {
@@ -87,6 +168,13 @@ function AuthPage() {
     });
 
     if (signUpError) {
+      if (isEmailRateLimitError(signUpError)) {
+        setError(
+          getEmailRateLimitMessage("send the confirmation email", signUpError),
+        );
+        return;
+      }
+
       setError(signUpError.message);
       return;
     }
@@ -102,6 +190,13 @@ function AuthPage() {
       await supabase.auth.resetPasswordForEmail(email);
 
     if (resetError) {
+      if (isEmailRateLimitError(resetError)) {
+        setError(
+          getEmailRateLimitMessage("send the reset password email", resetError),
+        );
+        return;
+      }
+
       setError(resetError.message);
       return;
     }

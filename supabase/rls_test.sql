@@ -4,7 +4,7 @@
 -- 1) Inspect policies are enabled
 select schemaname, tablename, rowsecurity
 from pg_tables
-where schemaname = 'public' and tablename in ('profiles', 'user_logs', 'composers', 'works');
+where schemaname = 'public' and tablename in ('profiles', 'user_logs', 'profile_notes', 'composer_notes', 'daily_recommendations', 'composers', 'works');
 
 -- 2) Simulate user A context
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000a1', true);
@@ -16,6 +16,9 @@ select id, title from public.works limit 5;
 -- User A can only read own profile/logs
 select * from public.profiles;
 select * from public.user_logs;
+select * from public.profile_notes;
+select * from public.composer_notes;
+select * from public.daily_recommendations;
 
 -- Insert own profile/log should succeed if ids match
 insert into public.profiles (id, display_name)
@@ -35,6 +38,9 @@ where id = '00000000-0000-0000-0000-0000000000a1';
 
 -- User B should not see user A logs
 select * from public.user_logs where user_id = '00000000-0000-0000-0000-0000000000a1';
+select * from public.profile_notes where user_id = '00000000-0000-0000-0000-0000000000a1';
+select * from public.composer_notes where user_id = '00000000-0000-0000-0000-0000000000a1';
+select * from public.daily_recommendations where user_id = '00000000-0000-0000-0000-0000000000a1';
 
 -- 4) Reset role config
 select set_config('request.jwt.claim.sub', '', true);
