@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
+import { getContactEmail } from "../lib/contact";
 import { hasSupabaseCredentials, supabase } from "../lib/supabaseClient";
 
 const NAV_ITEMS = [
@@ -14,7 +15,30 @@ function AppShell() {
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isLogoutArmed, setIsLogoutArmed] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [copyNotice, setCopyNotice] = useState("");
+  const contactEmail = getContactEmail();
   const logoutArmTimerRef = useRef(null);
+
+  async function handleCopyContactEmail() {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(contactEmail);
+      } else {
+        const input = document.createElement("textarea");
+        input.value = contactEmail;
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand("copy");
+        document.body.removeChild(input);
+      }
+
+      setCopyNotice("Email copied");
+      setTimeout(() => setCopyNotice(""), 1800);
+    } catch {
+      setCopyNotice("Copy failed");
+      setTimeout(() => setCopyNotice(""), 1800);
+    }
+  }
 
   function clearLogoutArmTimer() {
     if (logoutArmTimerRef.current) {
@@ -153,36 +177,103 @@ function AppShell() {
       <Outlet context={{ user, isAuthLoading }} />
 
       <footer className="app-footer" aria-label="App and sources">
-        <p className="app-footer-title">
-          Opus35, classical catalog and private listening journal.
-        </p>
-        <p className="text-muted">
-          Source data may vary by provider and can be incomplete for some works.
-        </p>
-        <ul className="app-source-list">
-          <li>
-            Catalog API source:
-            <a href="https://openopus.org/" target="_blank" rel="noreferrer">
-              OpenOpus API
-            </a>
-          </li>
-          <li>
-            Biography enrichment source:
-            <a
-              href="https://en.wikipedia.org/wiki/Main_Page"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Wikipedia
-            </a>
-          </li>
-          <li>
-            Backend/auth source:
-            <a href="https://supabase.com/" target="_blank" rel="noreferrer">
-              Supabase
-            </a>
-          </li>
-        </ul>
+        <div className="footer-top-grid">
+          <section
+            id="footer-contact"
+            className="footer-col"
+            aria-label="Contact and suggestions"
+          >
+            <h3 className="footer-heading">Contact</h3>
+            <p className="footer-contact-text">
+              Contact us, suggest an artist, report a bug, others informations
+              or make a donation:
+            </p>
+            <div className="footer-email-row">
+              <span className="footer-email-value">{contactEmail}</span>
+              <button
+                type="button"
+                className="footer-copy-btn"
+                aria-label="Copy contact email"
+                onClick={handleCopyContactEmail}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                >
+                  <path
+                    d="M9 9h10v12H9zM5 3h10v4H7v10H5z"
+                    fill="currentColor"
+                  />
+                </svg>
+              </button>
+            </div>
+            {copyNotice && <p className="footer-copy-notice">{copyNotice}</p>}
+          </section>
+
+          <section className="footer-col" aria-label="Navigation">
+            <h3 className="footer-heading">Navigation</h3>
+            <ul className="footer-link-list">
+              <li>
+                <Link to="/browse">Composers</Link>
+              </li>
+              <li>
+                <Link to="/zibaldone">Zibaldone</Link>
+              </li>
+              <li>
+                <Link to="/profile">Profile</Link>
+              </li>
+              <li>
+                <Link to="/stats">Discover</Link>
+              </li>
+            </ul>
+          </section>
+
+          <section className="footer-col" aria-label="Sources">
+            <h3 className="footer-heading">Sources</h3>
+            <ul className="footer-link-list">
+              <li>
+                <a
+                  href="https://openopus.org/"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  OpenOpus API
+                </a>
+              </li>
+              <li>
+                <a
+                  href="https://en.wikipedia.org/wiki/Main_Page"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Wikipedia
+                </a>
+              </li>
+            </ul>
+          </section>
+
+          <section className="footer-col" aria-label="About Opus35">
+            <h3 className="footer-heading">About Opus35</h3>
+            <p className="text-muted footer-text">
+              Classical catalog and private listening journal.
+            </p>
+            <p className="text-muted footer-text">
+              Source data may vary by provider and can be incomplete for some
+              works.
+            </p>
+          </section>
+        </div>
+
+        <div className="footer-bottom-bar" aria-label="Footer utility links">
+          <div className="footer-bottom-links">
+            <Link to="/profile">My Profile</Link>
+          </div>
+          <p className="footer-copyright">
+            © {new Date().getFullYear()} Opus35
+          </p>
+        </div>
       </footer>
     </div>
   );

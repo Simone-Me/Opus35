@@ -150,30 +150,143 @@ textarea {
 
 .app-footer {
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 10px;
   background: linear-gradient(
-    140deg,
-    rgba(23, 29, 29, 0.88),
-    rgba(30, 39, 38, 0.88)
+    145deg,
+    rgba(23, 29, 29, 0.95),
+    rgba(31, 39, 38, 0.92)
   );
-  padding: 0.85rem 1rem;
+  padding: 1.1rem 1rem 0.6rem;
 }
 
-.app-footer-title {
-  margin: 0;
-  font-family: "Fraunces", serif;
-  font-size: 1rem;
-}
-
-.app-source-list {
-  margin: 0.6rem 0 0;
-  padding-left: 1.1rem;
+.footer-top-grid {
   display: grid;
-  gap: 0.32rem;
-  color: var(--text-muted);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1.2rem;
 }
 
-.app-source-list a {
+.footer-col {
+  min-width: 0;
+}
+
+.footer-heading {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 0.96rem;
+  font-weight: 700;
+}
+
+.footer-text {
+  margin: 0.45rem 0 0;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.footer-link-list {
+  margin: 0.55rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.34rem;
+}
+
+.footer-link-list a {
+  color: var(--text-main);
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.footer-link-list a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--accent);
+}
+
+.footer-bottom-bar {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.footer-bottom-links {
+  display: flex;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.footer-bottom-links a {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  text-decoration: none;
+}
+
+.footer-bottom-links a:hover {
+  color: var(--text-main);
+}
+
+.footer-copyright {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.footer-contact-text {
+  margin: 0.55rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.footer-email-row {
+  margin-top: 0.55rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-panel-soft);
+  padding: 0.28rem 0.5rem;
+}
+
+.footer-email-value {
+  color: var(--text-main);
+  font-size: 0.86rem;
+}
+
+.footer-copy-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-main);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.footer-copy-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.footer-copy-notice {
+  margin: 0.35rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.composer-contact-hint {
+  margin: 0.4rem 0 0;
+}
+
+.composer-contact-hint a {
   color: var(--text-main);
   text-decoration: underline;
   text-decoration-color: var(--accent);
@@ -251,6 +364,10 @@ textarea {
   color: var(--text-main);
   border-color: var(--accent);
   background: var(--accent-soft);
+}
+
+.work-action-filter-row {
+  margin-top: 0.1rem;
 }
 
 .composer-grid {
@@ -454,6 +571,20 @@ textarea {
   transform: translateX(0);
 }
 
+.action-category-btn {
+  min-height: 34px;
+  padding: 0.3rem 0.55rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.28rem;
+}
+
+.action-category-btn span {
+  text-transform: lowercase;
+}
+
 .heard-details-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(180px, 1fr));
@@ -583,6 +714,27 @@ textarea {
 .btn-alert.active {
   border-color: var(--alert);
   background: rgba(184, 139, 62, 0.2);
+}
+
+.empty-state-card {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 0.7rem;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.empty-state-card p {
+  margin: 0;
+}
+
+.empty-state-card p + p {
+  margin-top: 0.4rem;
+}
+
+.empty-state-card a {
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 3px;
 }
 
 .form-grid {
@@ -966,6 +1118,15 @@ textarea {
 
   .composer-profile-head {
     grid-template-columns: 1fr;
+  }
+
+  .footer-top-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .footer-bottom-bar {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .works-toolbar,

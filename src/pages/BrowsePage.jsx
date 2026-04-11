@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import IconStreamlineUltimateArrowThickRightBottomCorner3 from "~icons/streamline-ultimate/arrow-thick-right-bottom-corner-3";
 import { getComposerCatalog } from "../services/catalogService";
 
 function LoadingCatalog() {
@@ -22,6 +23,8 @@ function BrowsePage() {
   const [epochFilter, setEpochFilter] = useState("all");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const trimmedQuery = query.trim();
 
   useEffect(() => {
     async function loadCatalog() {
@@ -53,7 +56,7 @@ function BrowsePage() {
   }, [catalog]);
 
   const filteredCatalog = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
+    const normalizedQuery = trimmedQuery.toLowerCase();
 
     return catalog.filter((composer) => {
       const matchesEpoch =
@@ -64,7 +67,7 @@ function BrowsePage() {
 
       return matchesEpoch && matchesSearch;
     });
-  }, [catalog, query, epochFilter]);
+  }, [catalog, trimmedQuery, epochFilter]);
 
   return (
     <main className="page">
@@ -142,9 +145,15 @@ function BrowsePage() {
           ))}
 
           {filteredCatalog.length === 0 && (
-            <p className="text-muted">
-              No composers match the current filters.
-            </p>
+            <div className="empty-state-card">
+              <p className="text-muted">
+                No composers match the current filters.
+              </p>
+              <p className="text-muted">
+                Did you type "{trimmedQuery}" correctly? If this artist is not
+                  present, you can suggest to add it in the contact area.
+              </p>
+            </div>
           )}
         </section>
       )}

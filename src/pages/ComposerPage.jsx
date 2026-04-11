@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useOutletContext, useParams } from "react-router-dom";
+import IconStreamlineUltimateBinocular from "~icons/streamline-ultimate/binocular";
+import IconStreamlineUltimateCdPlaying from "~icons/streamline-ultimate/cd-playing";
 import IconStreamlineUltimateMusicOnOff1 from "~icons/streamline-ultimate/music-on-off-1";
+import IconStreamlineUltimateSafetyDrownHand from "~icons/streamline-ultimate/safety-drown-hand";
+import IconStreamlineUltimateSmileySmile1Bold from "~icons/streamline-ultimate/smiley-smile-1-bold";
 import CategoryModal from "../components/CategoryModal";
 import {
   CATEGORIES,
@@ -26,6 +30,34 @@ import {
 } from "../services/logService";
 
 const COMPOSER_NOTE_MAX_LENGTH = 500;
+const WORK_ACTION_FILTERS = ["heard", "favorite", "bought", "alert"];
+
+const WORK_ACTION_METADATA = {
+  heard: {
+    icon: IconStreamlineUltimateBinocular,
+    actionLabel: "attended",
+    filterLabel: "Attended",
+    hint: "attended a performance of the opus",
+  },
+  bought: {
+    icon: IconStreamlineUltimateCdPlaying,
+    actionLabel: "own",
+    filterLabel: "Record",
+    hint: "bought a recording of the opus",
+  },
+  favorite: {
+    icon: IconStreamlineUltimateSmileySmile1Bold,
+    actionLabel: "favorite",
+    filterLabel: "Favorite",
+    hint: "marked as a favorite",
+  },
+  alert: {
+    icon: IconStreamlineUltimateSafetyDrownHand,
+    actionLabel: "alert",
+    filterLabel: "Alert",
+    hint: "interested to go to a performance or buy a record",
+  },
+};
 
 function getShortBio(value) {
   return (value || "").trim();
@@ -41,6 +73,7 @@ function ComposerPage() {
 
   const [query, setQuery] = useState("");
   const [genreFilter, setGenreFilter] = useState("all");
+  const [actionFilters, setActionFilters] = useState([]);
   const [pageSize, setPageSize] = useState(20);
   const [page, setPage] = useState(1);
   const [expandedWorkId, setExpandedWorkId] = useState(null);
@@ -181,7 +214,7 @@ function ComposerPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [query, genreFilter, pageSize]);
+  }, [query, genreFilter, actionFilters, pageSize]);
 
   useEffect(() => {
     setExpandedWorkId(null);
@@ -265,10 +298,14 @@ function ComposerPage() {
         !normalizedQuery ||
         (work.title || "").toLowerCase().includes(normalizedQuery);
       const matchesGenre = genreFilter === "all" || work.genre === genreFilter;
+      const activeCategories = workLogLookup.get(work.id)?.categories || [];
+      const matchesActionFilter =
+        actionFilters.length === 0 ||
+        actionFilters.some((category) => activeCategories.includes(category));
 
-      return matchesQuery && matchesGenre;
+      return matchesQuery && matchesGenre && matchesActionFilter;
     });
-  }, [works, query, genreFilter]);
+  }, [works, query, genreFilter, workLogLookup, actionFilters]);
 
   const totalPages = Math.max(1, Math.ceil(filteredWorks.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -286,6 +323,16 @@ function ComposerPage() {
 
     const data = await getUserLogs(user.id);
     setLogs(data);
+  }
+
+  function handleActionFilterToggle(category) {
+    setActionFilters((previous) => {
+      if (previous.includes(category)) {
+        return previous.filter((value) => value !== category);
+      }
+
+      return [...previous, category];
+    });
   }
 
   async function handleCategoryAction(workId, workTitle, category) {
@@ -458,7 +505,10 @@ function ComposerPage() {
     return (
       <main className="page">
         <h1>Composer not found</h1>
-        <p className="text-muted">The composer id does not exist.</p>
+        <p className="text-muted">
+          If this artist is not present, you can suggest it in the{" "}
+          <a href="#footer-contact">contact area</a>.
+        </p>
         <Link className="btn" to="/browse">
           Back to browse
         </Link>
@@ -503,6 +553,9 @@ function ComposerPage() {
           {isEnriching && (
             <p className="text-muted">Fetching Wikipedia enrichment...</p>
           )}
+          <p className="text-muted composer-contact-hint">
+            Missing an artist? Suggest it <a href="#footer-contact">here</a>.
+          </p>
           <p>
             <Link className="btn btn-small" to="/zibaldone">
               Open Zibaldone index
@@ -650,6 +703,31 @@ function ComposerPage() {
             </div>
           </div>
 
+          <div className="filter-chip-row work-action-filter-row">
+            <span className="text-muted">Actions</span>
+            <button
+              className={`chip ${actionFilters.length === 0 ? "active" : ""}`}
+              onClick={() => setActionFilters([])}
+              type="button"
+            >
+              Show all
+            </button>
+            {WORK_ACTION_FILTERS.map((category) => {
+              const metadata = WORK_ACTION_METADATA[category];
+
+              return (
+                <button
+                  key={category}
+                  className={`chip ${actionFilters.includes(category) ? "active" : ""}`}
+                  onClick={() => handleActionFilterToggle(category)}
+                  type="button"
+                >
+                  {metadata.filterLabel}
+                </button>
+              );
+            })}
+          </div>
+
           {isWorksLoading ? (
             <div className="table-skeleton">
               <div className="skeleton skeleton-line" />
@@ -705,6 +783,9 @@ function ComposerPage() {
                         >
                           {CATEGORY_ORDER.map((category) => {
                             const metadata = CATEGORIES[category];
+                            const actionMetadata =
+                              WORK_ACTION_METADATA[category];
+                            const Icon = actionMetadata.icon;
                             const isActive = Boolean(
                               workLogLookup
                                 .get(work.id)
@@ -714,7 +795,7 @@ function ComposerPage() {
                             return (
                               <button
                                 key={category}
-                                className={`btn btn-small btn-${category} ${isActive ? "active" : ""}`}
+                                className={`btn btn-small btn-${category} action-category-btn ${isActive ? "active" : ""}`}
                                 onClick={() =>
                                   handleCategoryAction(
                                     work.id,
@@ -722,11 +803,23 @@ function ComposerPage() {
                                     category,
                                   )
                                 }
+                                title={actionMetadata.hint || undefined}
+                                aria-label={
+                                  actionMetadata.hint
+                                    ? `${metadata.label}. ${actionMetadata.hint}`
+                                    : metadata.label
+                                }
                                 disabled={
                                   isSaving || expandedWorkId !== work.id
                                 }
+                                type="button"
                               >
-                                {metadata.label}
+                                <Icon
+                                  aria-hidden="true"
+                                  height="16"
+                                  width="16"
+                                />
+                                <span>{actionMetadata.actionLabel}</span>
                               </button>
                             );
                           })}

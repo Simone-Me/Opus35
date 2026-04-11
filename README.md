@@ -53,6 +53,7 @@ Main menu labels in UI:
 - Search by composer name
 - Filter by epoch chip
 - Displays empty state when nothing matches
+- Empty-search state asks users to verify search text and suggests missing artists via footer contact area
 - Each card links to composer detail page (arrow button)
 
 #### Composer
@@ -60,12 +61,14 @@ Main menu labels in UI:
 - Loads composer details and all works for the selected composer
 - Uses `complete_name` as the main heading when available
 - Work list supports search, genre filter, and pagination
+- Work list includes a multi-select action filter (`Show all`, `Attended`, `Favorite`, `Record`, `Alert`)
 - Each work row shows publication date (`TBD` when missing)
 - Per-work category actions are toggled via `streamline-ultimate:music-on-off-1` icon:
   - icon click opens/closes the action controls with a smooth slide animation
+  - action controls include text + icon and use hover help text
   - selected categories remain visible as chips even when controls are collapsed
 - Available categories:
-  - `heard` (with details modal)
+  - `heard` (labeled `Attended`, with details modal)
   - `favorite` (flag)
   - `record` (stored as `bought` category key, with details modal)
   - `alert` (flag)
@@ -77,6 +80,8 @@ Main menu labels in UI:
 - Heard/Record place supports selectable defaults and custom typed entries
 - If biography is missing, lazily invokes Edge Function to fetch Wikipedia summary
 - Biography preview is intentionally short for readability
+- Composer header includes a quick `here` link that jumps to footer contact for missing-artist suggestions
+- Composer not-found state directs users to the footer contact area to suggest missing artists
 
 #### Zibaldone
 
@@ -121,6 +126,13 @@ Main menu labels in UI:
 
 - Global error boundary catches render/runtime crashes and shows fallback UI
 - Unknown routes render a not-found page
+
+#### Contact and suggestions
+
+- Footer uses a classic multi-column layout (`Contact`, `Navigation`, `Sources`, `About`)
+- Footer includes a bottom utility bar with quick links and copyright
+- Contact section shows a plain contact sentence and direct email display with copy-to-clipboard button (no mailto in footer contact)
+- Contact links use `VITE_CONTACT_EMAIL` and fallback to `contact@opus35.fr`
 
 ## Data lifecycle
 

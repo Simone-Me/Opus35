@@ -1,5 +1,5 @@
 export const CATEGORIES = {
-  heard: { label: "Heard" },
+  heard: { label: "Attended" },
   favorite: { label: "Favorite" },
   bought: { label: "Record" },
   alert: { label: "Alert" },

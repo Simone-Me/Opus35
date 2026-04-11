@@ -132,3 +132,76 @@
 - Edge function now stores full Wikipedia `extract` text in `composers.bio`.
 - Backfill script now writes full biography text (no trimming to preview length).
 - Composer page now renders full biography text instead of preview-shortened text.
+
+## update_n11 (2026-04-11)
+
+- Composer page action controls redesign:
+  - category buttons are now icon-only actions in the expanded row
+  - icon mapping updated to requested Streamline Ultimate icons:
+    - `heard`/Attended: `streamline-ultimate:binocular`
+    - `record` (`bought` key): `streamline-ultimate:cd-playing`
+    - `favorite`: `streamline-ultimate:smiley-smile-1-bold`
+    - `alert`: `streamline-ultimate:safety-drown-hand`
+  - hover helper text added for Attended/Record/Favorite
+- Composer works filtering update:
+  - added multi-select action filter chips (`Show all`, `Attended`, `Favorite`, `Record`, `Alert`)
+  - supports selecting one or more action chips at the same time
+- Missing artist suggestion flow:
+  - Browse empty-search state now suggests missing composers with a prefilled mail link
+  - global footer now includes an ideas/missing-artists contact section
+  - contact links are configurable via `VITE_CONTACT_EMAIL`
+
+## update_n12 (2026-04-11)
+
+- Composer action buttons switched from icon-only to text + icon labels in the work action row:
+  - `heard`: `attended` + `streamline-ultimate:binocular`
+  - `record` (`bought` key): `own` + `streamline-ultimate:cd-playing`
+  - `favorite`: `favorite` + `streamline-ultimate:smiley-smile-1-bold`
+  - `alert`: `alert` + `streamline-ultimate:safety-drown-hand`
+- Added alert hover helper text: `interested to go / in my alert list`.
+
+## update_n13 (2026-04-11)
+
+- Composer page contact UX update:
+  - added a `here` link near composer header that jumps to footer contact section (`#footer-contact`)
+- Footer reorganization:
+  - redesigned as a clearer classic 3-column footer (`About`, `Contact`, `Sources`)
+  - contact area now shows both:
+    - a prefilled suggestion `mailto:` action
+    - direct visible email address link
+- Contact reliability update:
+  - suggestion email now falls back to `contact@opus35.fr` when `VITE_CONTACT_EMAIL` is not set
+
+## update_n14 (2026-04-11)
+
+- Footer redesigned to a classic dark multi-column style inspired by enterprise website footers.
+- New footer column structure:
+  - `Contact`
+  - `Navigation`
+  - `News and info`
+  - `About Opus35`
+- Added bottom utility bar with quick links (`Contact us`, `Catalog`, `Account`) and copyright line.
+- Preserved `#footer-contact` anchor so composer-page `here` link still jumps to contact section.
+
+## update_n15 (2026-04-11)
+
+- Footer contact behavior update:
+  - removed footer `mailto:` actions (for users without configured mail clients)
+  - added direct email display plus copy-email icon button
+  - added copy feedback notice (`Email copied` / `Copy failed`)
+- Footer content updates:
+  - renamed `News and info` to `Sources`
+  - removed `Supabase` from sources list
+  - bottom utility links simplified to `My Profile` only (removed `Catalog` and `Contact us`)
+- Footer color palette adjusted to match main app design tokens.
+
+## update_n16 (2026-04-11)
+
+- Composer not-found message updated to guide users toward the footer contact area for suggesting missing artists.
+
+## update_n17 (2026-04-11)
+
+- Browse empty-state message updated to:
+  - `No composers match the current filters.`
+  - `Did you type "..." correctly? If this artist is not present, you can suggest adding it here.`
+- `here` now links to footer contact area anchor (`#footer-contact`) instead of mailto.
