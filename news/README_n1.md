@@ -205,3 +205,25 @@
   - `No composers match the current filters.`
   - `Did you type "..." correctly? If this artist is not present, you can suggest adding it here.`
 - `here` now links to footer contact area anchor (`#footer-contact`) instead of mailto.
+
+## update_n18 (2026-04-11)
+
+- Discover charts improvements:
+  - top composers x-axis labels rotated (45°) so long names fit
+  - tooltip style updated for dark-theme readability
+  - epoch-by-year chart now shows a legend for all epoch buckets
+- Favicon integration:
+  - extracted provided favicon package into `public/`
+  - wired `index.html` to use `favicon.ico`, PNG favicon sizes, Apple touch icon, and `site.webmanifest`
+
+## update_n19 (2026-04-11)
+
+- Discover epoch chart upgraded from broad buckets to full epoch categories:
+  - `20th Century`, `21st Century`, `Baroque`, `Classical`, `Early Romantic`, `Late Romantic`, `Medieval`, `Post-War`, `Renaissance`, `Romantic`, plus `Other`
+- Added distinct color palette per epoch series in the stacked year chart.
+
+## update_n20 (2026-04-11)
+
+- Discover chart tooltip readability and signal improvements:
+  - epoch tooltip now lists only non-zero epoch values for the hovered year
+  - tooltip rendering switched to an opaque custom card so text stays readable over chart and legend

@@ -110,7 +110,16 @@ Main menu labels in UI:
 
 - Uses only logs tagged as `heard`
 - Chart 1: top composers by listen count
-- Chart 2: heard logs by year with epoch buckets (`Baroque`, `Classical`, `Romantic`, `Modern`, `Other`)
+- Top-composer chart uses angled x-axis labels so long names stay readable
+- Tooltip styling uses dark theme colors for readability
+- Chart 2: heard logs by year with full epoch buckets (`Medieval`, `Renaissance`, `Baroque`, `Classical`, `Early Romantic`, `Late Romantic`, `Romantic`, `20th Century`, `Post-War`, `21st Century`, `Other`)
+- Epoch-by-year chart includes visible legend and distinct color per epoch bucket
+- Epoch tooltip shows only present values (non-zero buckets), with opaque styling for readability
+
+#### Favicons
+
+- Website favicon assets are served from `public/` (`favicon.ico`, PNG sizes, Apple touch icon)
+- `index.html` includes favicon and `site.webmanifest` links
 
 #### Auth
 

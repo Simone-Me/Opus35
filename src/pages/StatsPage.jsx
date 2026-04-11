@@ -4,6 +4,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -11,7 +12,19 @@ import {
 } from "recharts";
 import { getUserLogs } from "../services/logService";
 
-const EPOCH_BUCKETS = ["Baroque", "Classical", "Romantic", "Modern", "Other"];
+const EPOCH_SERIES = [
+  { key: "Medieval", color: "#6f7f95" },
+  { key: "Renaissance", color: "#5e9a8b" },
+  { key: "Baroque", color: "#b88b3e" },
+  { key: "Classical", color: "#ddb560" },
+  { key: "Early Romantic", color: "#9d6cc0" },
+  { key: "Late Romantic", color: "#c46d8c" },
+  { key: "Romantic", color: "#b45f5f" },
+  { key: "20th Century", color: "#5d7ebf" },
+  { key: "Post-War", color: "#4f98ad" },
+  { key: "21st Century", color: "#2a8f6d" },
+  { key: "Other", color: "#5a5a5a" },
+];
 
 function extractComposer(work) {
   const composer = work?.composers;
@@ -28,7 +41,19 @@ function toEpochBucket(epoch) {
     return "Other";
   }
 
-  const normalized = epoch.toLowerCase();
+  const normalized = epoch
+    .toLowerCase()
+    .replace(/[\u2010-\u2015]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (normalized.includes("medieval")) {
+    return "Medieval";
+  }
+
+  if (normalized.includes("renaissance")) {
+    return "Renaissance";
+  }
 
   if (normalized.includes("baroque")) {
     return "Baroque";
@@ -38,17 +63,41 @@ function toEpochBucket(epoch) {
     return "Classical";
   }
 
-  if (normalized.includes("romantic")) {
+  if (normalized.includes("early romantic")) {
+    return "Early Romantic";
+  }
+
+  if (normalized.includes("late romantic")) {
+    return "Late Romantic";
+  }
+
+  if (normalized === "romantic" || normalized.includes(" romantic")) {
     return "Romantic";
   }
 
+  if (normalized.includes("post-war") || normalized.includes("post war")) {
+    return "Post-War";
+  }
+
   if (
-    normalized.includes("modern") ||
+    normalized.includes("20th century") ||
     normalized.includes("20th") ||
+    normalized.includes("twentieth")
+  ) {
+    return "20th Century";
+  }
+
+  if (
+    normalized.includes("21st century") ||
     normalized.includes("21st") ||
+    normalized.includes("twenty-first") ||
     normalized.includes("contemporary")
   ) {
-    return "Modern";
+    return "21st Century";
+  }
+
+  if (normalized.includes("modern")) {
+    return "20th Century";
   }
 
   return "Other";
@@ -68,6 +117,74 @@ function getHeardYear(log) {
   }
 
   return String(parsedDate.getFullYear());
+}
+
+function ChartTooltip({ active, payload, label, hideZeroValues = false }) {
+  if (!active || !Array.isArray(payload)) {
+    return null;
+  }
+
+  const rows = payload.filter((entry) => {
+    const value = Number(entry?.value ?? 0);
+
+    if (hideZeroValues) {
+      return value > 0;
+    }
+
+    return entry?.value !== null && entry?.value !== undefined;
+  });
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        backgroundColor: "#171d1d",
+        border: "1px solid #2f3a39",
+        borderRadius: "8px",
+        color: "#e8ece9",
+        padding: "8px 10px",
+        boxShadow: "0 8px 20px rgba(0,0,0,0.4)",
+        opacity: 1,
+      }}
+    >
+      <p style={{ margin: "0 0 6px", color: "#ddb560", fontWeight: 600 }}>
+        {label}
+      </p>
+      <ul
+        style={{
+          listStyle: "none",
+          margin: 0,
+          padding: 0,
+          display: "grid",
+          gap: 4,
+        }}
+      >
+        {rows.map((entry) => (
+          <li
+            key={`${entry.name}-${entry.dataKey}`}
+            style={{ display: "flex", alignItems: "center", gap: 6 }}
+          >
+            <span
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 999,
+                backgroundColor: entry.color,
+                display: "inline-block",
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ color: "#e8ece9" }}>
+              {entry.name}: {entry.value}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function StatsPage() {
@@ -123,10 +240,10 @@ function StatsPage() {
       if (!byYear.has(year)) {
         byYear.set(
           year,
-          EPOCH_BUCKETS.reduce(
+          EPOCH_SERIES.reduce(
             (accumulator, epochKey) => ({
               ...accumulator,
-              [epochKey]: 0,
+              [epochKey.key]: 0,
             }),
             { year },
           ),
@@ -183,9 +300,21 @@ function StatsPage() {
               <ResponsiveContainer>
                 <BarChart data={topComposerData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2f3a39" />
-                  <XAxis dataKey="name" stroke="#acb9b3" />
+                  <XAxis
+                    dataKey="name"
+                    stroke="#acb9b3"
+                    angle={-45}
+                    textAnchor="end"
+                    interval={0}
+                    height={90}
+                    tickMargin={8}
+                  />
                   <YAxis stroke="#acb9b3" allowDecimals={false} />
-                  <Tooltip />
+                  <Tooltip
+                    content={<ChartTooltip />}
+                    wrapperStyle={{ zIndex: 30 }}
+                    cursor={{ fill: "rgba(221, 181, 96, 0.12)" }}
+                  />
                   <Bar dataKey="listens" fill="#2a8f6d" />
                 </BarChart>
               </ResponsiveContainer>
@@ -200,12 +329,20 @@ function StatsPage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#2f3a39" />
                   <XAxis dataKey="year" stroke="#acb9b3" />
                   <YAxis stroke="#acb9b3" allowDecimals={false} />
-                  <Tooltip />
-                  <Bar dataKey="Baroque" stackId="epochs" fill="#b88b3e" />
-                  <Bar dataKey="Classical" stackId="epochs" fill="#ddb560" />
-                  <Bar dataKey="Romantic" stackId="epochs" fill="#b45f5f" />
-                  <Bar dataKey="Modern" stackId="epochs" fill="#5d7ebf" />
-                  <Bar dataKey="Other" stackId="epochs" fill="#5a5a5a" />
+                  <Tooltip
+                    content={<ChartTooltip hideZeroValues />}
+                    wrapperStyle={{ zIndex: 30 }}
+                    cursor={{ fill: "rgba(221, 181, 96, 0.12)" }}
+                  />
+                  <Legend wrapperStyle={{ color: "#e8ece9", fontSize: 12 }} />
+                  {EPOCH_SERIES.map((epoch) => (
+                    <Bar
+                      key={epoch.key}
+                      dataKey={epoch.key}
+                      stackId="epochs"
+                      fill={epoch.color}
+                    />
+                  ))}
                 </BarChart>
               </ResponsiveContainer>
             </div>
