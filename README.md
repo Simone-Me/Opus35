@@ -424,6 +424,28 @@ Set Netlify env vars:
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
 
+### GitHub Actions: Supabase keep-alive and backup
+
+Two scheduled workflows keep the Supabase Free-tier project alive and back up its data, since Supabase Free pauses projects after a week of inactivity and does not retain any backups itself.
+
+- `.github/workflows/keepalive.yml`: pings the project's REST endpoint every night at 02:00 UTC (also runnable manually via `workflow_dispatch`).
+- `.github/workflows/backup.yml`: dumps the full database every Sunday at 03:11 UTC and uploads it as a workflow artifact (30-day retention, also runnable manually via `workflow_dispatch`).
+
+Required GitHub repo configuration (Settings → Secrets and variables → Actions):
+
+Variables tab (same names as used elsewhere in this project, see `.env.example`):
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+
+Secrets tab:
+
+- `SUPABASE_DB_URL`: connection pooler string (Session or Transaction pooler, not the direct `db.<ref>.supabase.co` host, which is IPv6-only and unreachable from GitHub-hosted runners), found in Supabase dashboard → Project Settings → Database → Connection string. Format:
+
+  ```text
+  postgresql://postgres.<project-ref>:<PASSWORD>@aws-0-<region>.pooler.supabase.com:5432/postgres
+  ```
+
 ## Key folders
 
 ```text

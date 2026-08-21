@@ -227,3 +227,10 @@
 - Discover chart tooltip readability and signal improvements:
   - epoch tooltip now lists only non-zero epoch values for the hovered year
   - tooltip rendering switched to an opaque custom card so text stays readable over chart and legend
+
+## update_n21 (2026-08-21)
+
+- Added GitHub Actions deployment/ops workflows:
+  - `.github/workflows/keepalive.yml`: nightly ping (02:00 UTC) to the Supabase REST endpoint to prevent the Free-tier project from pausing after a week of inactivity
+  - `.github/workflows/backup.yml`: weekly (Sunday 03:11 UTC) `pg_dump` of the database via the Supabase connection pooler, uploaded as a 30-day-retention workflow artifact (Supabase Free keeps no backups of its own)
+- Documented required repo-level Variables (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`) and Secrets (`SUPABASE_DB_URL`) for these workflows in `README.md`
