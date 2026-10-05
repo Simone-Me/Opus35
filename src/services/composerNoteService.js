@@ -1,10 +1,5 @@
+import { validateNote } from "../lib/notes";
 import { hasSupabaseCredentials, supabase } from "../lib/supabaseClient";
-
-const COMPOSER_NOTE_MAX_LENGTH = 500;
-
-function normalizeNote(note) {
-  return (note || "").trim();
-}
 
 export async function getComposerNote({ userId, composerId }) {
   if (!hasSupabaseCredentials || !userId || !composerId) {
@@ -32,14 +27,10 @@ export async function upsertComposerNote({ userId, composerId, note }) {
     );
   }
 
-  const normalizedNote = normalizeNote(note);
+  const validation = validateNote(note);
 
-  if (!normalizedNote) {
-    throw new Error("Write a note before saving.");
-  }
-
-  if (normalizedNote.length > COMPOSER_NOTE_MAX_LENGTH) {
-    throw new Error("Note must be 500 characters or fewer.");
+  if (validation.error) {
+    throw new Error(validation.error);
   }
 
   const { data, error } = await supabase
@@ -48,7 +39,7 @@ export async function upsertComposerNote({ userId, composerId, note }) {
       {
         user_id: userId,
         composer_id: composerId,
-        note: normalizedNote,
+        note: validation.note,
       },
       {
         onConflict: "user_id,composer_id",

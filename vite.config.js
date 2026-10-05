@@ -1,5 +1,4 @@
 import react from "@vitejs/plugin-react";
-import AutoImport from "unplugin-auto-import/vite";
 import Icons from "unplugin-icons/vite";
 import { defineConfig } from "vite";
 
@@ -7,22 +6,16 @@ import { defineConfig } from "vite";
 export default defineConfig({
   plugins: [
     react(),
-    AutoImport({
-      resolvers: [
-        (name) => {
-          if (name === "IconStreamlineUltimateArrowThickRightBottomCorner3") {
-            return {
-              name: "default",
-              as: name,
-              from: "~icons/streamline-ultimate/arrow-thick-right-bottom-corner-3",
-            };
-          }
-        },
-      ],
-    }),
     Icons({
       compiler: "jsx",
-      autoInstall: true,
+      // Icon sets are declared in devDependencies; never install at build time.
+      autoInstall: false,
     }),
   ],
+  test: {
+    include: ["src/**/*.test.{js,jsx}"],
+    environment: "jsdom",
+    setupFiles: ["./src/test/setup.js"],
+    restoreMocks: true,
+  },
 });

@@ -1,5 +1,27 @@
 import { hasSupabaseCredentials, supabase } from "../lib/supabaseClient";
 
+const LOG_FIELDS = [
+  "id",
+  "user_id",
+  "work_id",
+  "categories",
+  "details",
+  "created_at",
+  "updated_at",
+];
+const LOG_COLUMNS = LOG_FIELDS.join(",");
+
+function requireClient() {
+  if (!hasSupabaseCredentials) {
+    throw new Error("Supabase credentials are required to save categories.");
+  }
+}
+
+// RPCs return `setof user_logs`: one row, or none when the row was deleted.
+function firstRow(data) {
+  return Array.isArray(data) ? data[0] || null : data || null;
+}
+
 export async function getUserLogs(userId) {
   if (!hasSupabaseCredentials || !userId) {
     return [];
@@ -8,7 +30,7 @@ export async function getUserLogs(userId) {
   const { data, error } = await supabase
     .from("user_logs")
     .select(
-      "id,user_id,work_id,categories,details,created_at,updated_at,works(id,title,genre,composers(id,name,epoch,bio,portrait_url,wikipedia_url))",
+      `${LOG_COLUMNS},works(id,title,genre,composers(id,name,epoch))`,
     )
     .eq("user_id", userId)
     .order("updated_at", { ascending: false });
@@ -20,136 +42,117 @@ export async function getUserLogs(userId) {
   return data || [];
 }
 
-async function getSingleLog(userId, workId) {
+// Only the logs of one composer's works (inner join filter on works.composer_id).
+export async function getUserLogsForComposer(userId, composerId) {
+  if (!hasSupabaseCredentials || !userId || !composerId) {
+    return [];
+  }
+
   const { data, error } = await supabase
     .from("user_logs")
-    .select("id,user_id,work_id,categories,details,created_at,updated_at")
+    .select(`${LOG_COLUMNS},works!inner(composer_id)`)
     .eq("user_id", userId)
-    .eq("work_id", workId)
-    .maybeSingle();
+    .eq("works.composer_id", composerId);
 
   if (error) {
     throw error;
   }
 
-  return data;
+  return data || [];
 }
 
-function mergeCategoryDetails(existingDetails, category, categoryDetails) {
-  const merged = { ...(existingDetails || {}) };
-
-  if (categoryDetails && Object.keys(categoryDetails).length > 0) {
-    merged[category] = categoryDetails;
+// Lightweight list of places already typed by the user (for suggestions).
+export async function getUserPlaceLogs(userId) {
+  if (!hasSupabaseCredentials || !userId) {
+    return [];
   }
-
-  return merged;
-}
-
-export async function upsertUserLogCategory({
-  userId,
-  workId,
-  category,
-  details,
-}) {
-  const existing = await getSingleLog(userId, workId);
-
-  if (!existing) {
-    const payload = {
-      user_id: userId,
-      work_id: workId,
-      categories: [category],
-      details: mergeCategoryDetails({}, category, details),
-    };
-
-    const { data, error } = await supabase
-      .from("user_logs")
-      .insert(payload)
-      .select("id,user_id,work_id,categories,details,created_at,updated_at")
-      .single();
-
-    if (error) {
-      throw error;
-    }
-
-    return data;
-  }
-
-  const categories = Array.from(
-    new Set([...(existing.categories || []), category]),
-  );
-  const mergedDetails = mergeCategoryDetails(
-    existing.details,
-    category,
-    details,
-  );
 
   const { data, error } = await supabase
     .from("user_logs")
-    .update({
-      categories,
-      details: mergedDetails,
-    })
-    .eq("id", existing.id)
-    .select("id,user_id,work_id,categories,details,created_at,updated_at")
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return data;
-}
-
-export async function removeUserLogCategory({ userId, workId, category }) {
-  const existing = await getSingleLog(userId, workId);
-
-  if (!existing) {
-    return;
-  }
-
-  const categories = (existing.categories || []).filter(
-    (value) => value !== category,
-  );
-  const nextDetails = { ...(existing.details || {}) };
-  delete nextDetails[category];
-
-  if (categories.length === 0) {
-    const { error } = await supabase
-      .from("user_logs")
-      .delete()
-      .eq("id", existing.id)
-      .eq("user_id", userId);
-
-    if (error) {
-      throw error;
-    }
-
-    return;
-  }
-
-  const { error } = await supabase
-    .from("user_logs")
-    .update({
-      categories,
-      details: nextDetails,
-    })
-    .eq("id", existing.id)
+    .select("heard_place:details->heard->>place,bought_place:details->bought->>place")
     .eq("user_id", userId);
 
   if (error) {
     throw error;
   }
+
+  return (data || []).map((row) => ({
+    details: {
+      heard: { place: row.heard_place },
+      bought: { place: row.bought_place },
+    },
+  }));
 }
 
-export async function toggleUserLogCategory({ userId, workId, category }) {
-  const existing = await getSingleLog(userId, workId);
-  const isActive = Boolean(existing?.categories?.includes(category));
+// Adds a category (and, for detailed categories, replaces its details).
+export async function setUserLogCategory({ workId, category, details = null }) {
+  requireClient();
 
-  if (isActive) {
-    await removeUserLogCategory({ userId, workId, category });
-    return { active: false };
+  const { data, error } = await supabase.rpc("set_user_log_category", {
+    p_work_id: workId,
+    p_category: category,
+    p_details: details,
+  });
+
+  if (error) {
+    throw error;
   }
 
-  await upsertUserLogCategory({ userId, workId, category });
-  return { active: true };
+  return firstRow(data);
+}
+
+// Returns the remaining log row, or null when the row was deleted.
+export async function removeUserLogCategory({ workId, category }) {
+  requireClient();
+
+  const { data, error } = await supabase.rpc("remove_user_log_category", {
+    p_work_id: workId,
+    p_category: category,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return firstRow(data);
+}
+
+// Returns the resulting log row, or null when the row was deleted.
+export async function toggleUserLogCategory({ workId, category }) {
+  requireClient();
+
+  const { data, error } = await supabase.rpc("toggle_user_log_category", {
+    p_work_id: workId,
+    p_category: category,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return firstRow(data);
+}
+
+// Applies an RPC result to a list of logs. Only user_logs columns are taken
+// from the result, so joined data already loaded (e.g. `works`) is kept.
+export function applyLogChange(logs, workId, updatedLog) {
+  if (!updatedLog) {
+    return logs.filter((log) => log.work_id !== workId);
+  }
+
+  const columns = Object.fromEntries(
+    LOG_FIELDS.filter((field) => field in updatedLog).map((field) => [
+      field,
+      updatedLog[field],
+    ]),
+  );
+  const index = logs.findIndex((log) => log.work_id === workId);
+
+  if (index === -1) {
+    return [columns, ...logs];
+  }
+
+  const next = [...logs];
+  next[index] = { ...logs[index], ...columns };
+  return next;
 }

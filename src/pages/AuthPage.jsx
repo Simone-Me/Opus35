@@ -1,14 +1,24 @@
 import { useMemo, useState } from "react";
 import { useOutletContext, useSearchParams } from "react-router-dom";
+import {
+  checkPasswordPolicy,
+  getPasswordPolicyError,
+  PASSWORD_MIN_LENGTH,
+} from "../lib/password";
 import { hasSupabaseCredentials, supabase } from "../lib/supabaseClient";
 
-const PASSWORD_MIN_LENGTH = 12;
-const SPECIAL_CHARACTER_REGEX = /[^A-Za-z0-9]/;
 const EMAIL_RATE_LIMIT_PER_HOUR = 2;
+const AUTH_MODES = ["login", "signup", "recovery"];
 
-function getInitialMode(searchParams) {
+function getMode(searchParams) {
   const mode = searchParams.get("mode");
-  return mode === "signup" ? "signup" : "login";
+  return AUTH_MODES.includes(mode) ? mode : "login";
+}
+
+// Where the reset-password email sends the user back (must be listed in
+// Supabase Auth > URL Configuration > Redirect URLs).
+function getRecoveryRedirectUrl() {
+  return `${window.location.origin}/auth?mode=recovery`;
 }
 
 function getRetryDelayMsFromMessage(message) {
@@ -91,128 +101,290 @@ function getEmailRateLimitMessage(actionLabel, error) {
   return `Email could not be sent because the Supabase limit (${EMAIL_RATE_LIMIT_PER_HOUR}/hour) was reached while trying to ${actionLabel}.${preciseTimeMessage}`;
 }
 
-function AuthPage() {
-  const { user } = useOutletContext();
-  const [searchParams, setSearchParams] = useSearchParams();
+function PasswordFields({
+  password,
+  confirmPassword,
+  onPasswordChange,
+  onConfirmPasswordChange,
+  withConfirmation,
+  policy,
+  passwordLabel = "Password",
+  autoComplete,
+}) {
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  const [mode, setMode] = useState(() => getInitialMode(searchParams));
+  return (
+    <>
+      <label className="form-field">
+        <span>{passwordLabel}</span>
+        <div className="password-input-row">
+          <input
+            className="input"
+            type={showPassword ? "text" : "password"}
+            value={password}
+            onChange={(event) => onPasswordChange(event.target.value)}
+            autoComplete={autoComplete}
+            required
+          />
+          <button
+            className="btn btn-small"
+            type="button"
+            onClick={() => setShowPassword((previous) => !previous)}
+          >
+            {showPassword ? "Hide" : "Show"}
+          </button>
+        </div>
+      </label>
+
+      {withConfirmation && (
+        <>
+          <label className="form-field">
+            <span>Confirm password</span>
+            <div className="password-input-row">
+              <input
+                className="input"
+                type={showConfirmPassword ? "text" : "password"}
+                value={confirmPassword}
+                onChange={(event) =>
+                  onConfirmPasswordChange(event.target.value)
+                }
+                autoComplete="new-password"
+                required
+              />
+              <button
+                className="btn btn-small"
+                type="button"
+                onClick={() =>
+                  setShowConfirmPassword((previous) => !previous)
+                }
+              >
+                {showConfirmPassword ? "Hide" : "Show"}
+              </button>
+            </div>
+          </label>
+
+          <div className="auth-requirements text-muted">
+            <div>
+              {policy.minLengthOk ? "✓" : "•"} Minimum {PASSWORD_MIN_LENGTH}{" "}
+              characters
+            </div>
+            <div>
+              {policy.specialCharacterOk ? "✓" : "•"} At least one special
+              character
+            </div>
+            <div>{policy.confirmOk ? "✓" : "•"} Passwords match</div>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+function AuthPage() {
+  const { user, isAuthLoading } = useOutletContext();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const mode = getMode(searchParams);
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   const passwordPolicy = useMemo(
-    () => ({
-      minLengthOk: password.length >= PASSWORD_MIN_LENGTH,
-      specialCharacterOk: SPECIAL_CHARACTER_REGEX.test(password),
-      confirmOk: password === confirmPassword && confirmPassword.length > 0,
-    }),
+    () => checkPasswordPolicy(password, confirmPassword),
     [password, confirmPassword],
   );
 
-  function switchMode(nextMode) {
-    setMode(nextMode);
+  function resetFeedback() {
     setError("");
     setMessage("");
+  }
+
+  function switchMode(nextMode) {
+    resetFeedback();
     setPassword("");
     setConfirmPassword("");
-    setShowPassword(false);
-    setShowConfirmPassword(false);
     setSearchParams({ mode: nextMode });
   }
 
-  async function handleSignIn(event) {
-    event.preventDefault();
-    setError("");
-    setMessage("");
-
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (signInError) {
-      setError(signInError.message);
+  // Runs an auth call with a single in-flight request and shared error display.
+  async function submit(action) {
+    if (isSubmitting) {
       return;
     }
 
-    setMessage("Signed in.");
+    resetFeedback();
+    setIsSubmitting(true);
+
+    try {
+      await action();
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
-  async function handleSignUp(event) {
+  function handleSignIn(event) {
     event.preventDefault();
-    setError("");
-    setMessage("");
 
-    if (!passwordPolicy.minLengthOk) {
-      setError(`Password must be at least ${PASSWORD_MIN_LENGTH} characters.`);
-      return;
-    }
+    return submit(async () => {
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-    if (!passwordPolicy.specialCharacterOk) {
-      setError("Password must contain at least one special character.");
-      return;
-    }
+      if (signInError) {
+        setError(signInError.message);
+        return;
+      }
 
-    if (!passwordPolicy.confirmOk) {
-      setError("Passwords do not match.");
-      return;
-    }
-
-    const { error: signUpError } = await supabase.auth.signUp({
-      email,
-      password,
+      setPassword("");
+      setMessage("Signed in.");
     });
+  }
 
-    if (signUpError) {
-      if (isEmailRateLimitError(signUpError)) {
+  function handleSignUp(event) {
+    event.preventDefault();
+    const policyError = getPasswordPolicyError(passwordPolicy);
+
+    if (policyError) {
+      resetFeedback();
+      setError(policyError);
+      return undefined;
+    }
+
+    return submit(async () => {
+      const { error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+      });
+
+      if (signUpError) {
         setError(
-          getEmailRateLimitMessage("send the confirmation email", signUpError),
+          isEmailRateLimitError(signUpError)
+            ? getEmailRateLimitMessage("send the confirmation email", signUpError)
+            : signUpError.message,
         );
         return;
       }
 
-      setError(signUpError.message);
-      return;
-    }
-
-    setMessage("Sign-up submitted. Check your email for confirmation.");
+      setPassword("");
+      setConfirmPassword("");
+      setMessage("Sign-up submitted. Check your email for confirmation.");
+    });
   }
 
-  async function handleResetPassword() {
-    setError("");
-    setMessage("");
+  function handleResetPassword() {
+    return submit(async () => {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+        email,
+        { redirectTo: getRecoveryRedirectUrl() },
+      );
 
-    const { error: resetError } =
-      await supabase.auth.resetPasswordForEmail(email);
-
-    if (resetError) {
-      if (isEmailRateLimitError(resetError)) {
+      if (resetError) {
         setError(
-          getEmailRateLimitMessage("send the reset password email", resetError),
+          isEmailRateLimitError(resetError)
+            ? getEmailRateLimitMessage("send the reset password email", resetError)
+            : resetError.message,
         );
         return;
       }
 
-      setError(resetError.message);
-      return;
-    }
-
-    setMessage("Password reset email sent.");
+      setMessage(
+        "Password reset email sent. Open the link in this browser to choose a new password.",
+      );
+    });
   }
 
-  async function handleSignOut() {
-    const { error: signOutError } = await supabase.auth.signOut();
+  function handleUpdatePassword(event) {
+    event.preventDefault();
+    const policyError = getPasswordPolicyError(passwordPolicy);
 
-    if (signOutError) {
-      setError(signOutError.message);
-      return;
+    if (policyError) {
+      resetFeedback();
+      setError(policyError);
+      return undefined;
     }
 
-    setMessage("Signed out.");
+    return submit(async () => {
+      const { error: updateError } = await supabase.auth.updateUser({
+        password,
+      });
+
+      if (updateError) {
+        setError(updateError.message);
+        return;
+      }
+
+      setPassword("");
+      setConfirmPassword("");
+      setSearchParams({});
+      setMessage("Password updated. You are signed in.");
+    });
+  }
+
+  function handleSignOut() {
+    return submit(async () => {
+      const { error: signOutError } = await supabase.auth.signOut();
+
+      if (signOutError) {
+        setError(signOutError.message);
+        return;
+      }
+
+      setMessage("Signed out.");
+    });
+  }
+
+  function renderRecovery() {
+    if (isAuthLoading) {
+      return <p className="text-muted">Checking your reset link...</p>;
+    }
+
+    if (!user) {
+      return (
+        <div className="alert">
+          This password reset link is invalid or has expired. Request a new
+          one from the login form.
+          <div style={{ marginTop: "0.6rem" }}>
+            <button
+              className="btn"
+              type="button"
+              onClick={() => switchMode("login")}
+            >
+              Back to login
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <form className="form-grid auth-form" onSubmit={handleUpdatePassword}>
+        <p className="text-muted">Choose a new password for {user.email}.</p>
+        <PasswordFields
+          password={password}
+          confirmPassword={confirmPassword}
+          onPasswordChange={setPassword}
+          onConfirmPasswordChange={setConfirmPassword}
+          withConfirmation
+          policy={passwordPolicy}
+          passwordLabel="New password"
+          autoComplete="new-password"
+        />
+        <div className="table-actions auth-actions">
+          <button
+            className="btn"
+            type="submit"
+            disabled={!hasSupabaseCredentials || isSubmitting}
+          >
+            {isSubmitting ? "Saving..." : "Update password"}
+          </button>
+        </div>
+      </form>
+    );
   }
 
   return (
@@ -227,26 +399,39 @@ function AuthPage() {
         </div>
       )}
 
-      {user ? (
+      {mode === "recovery" ? (
+        renderRecovery()
+      ) : user ? (
         <div className="alert">
           Signed in as {user.email}
           <div style={{ marginTop: "0.6rem" }}>
-            <button className="btn" onClick={handleSignOut}>
+            <button
+              className="btn"
+              type="button"
+              onClick={handleSignOut}
+              disabled={isSubmitting}
+            >
               Sign out
             </button>
           </div>
         </div>
       ) : (
         <>
-          <div className="auth-mode-row">
+          <div className="auth-mode-row" role="tablist">
             <button
               className={`tab-btn ${mode === "login" ? "active" : ""}`}
+              type="button"
+              role="tab"
+              aria-selected={mode === "login"}
               onClick={() => switchMode("login")}
             >
               Login
             </button>
             <button
               className={`tab-btn ${mode === "signup" ? "active" : ""}`}
+              type="button"
+              role="tab"
+              aria-selected={mode === "signup"}
               onClick={() => switchMode("signup")}
             >
               Sign up
@@ -264,79 +449,35 @@ function AuthPage() {
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
+                autoComplete="email"
                 required
               />
             </label>
 
-            <label className="form-field">
-              <span>Password</span>
-              <div className="password-input-row">
-                <input
-                  className="input"
-                  type={showPassword ? "text" : "password"}
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  required
-                />
-                <button
-                  className="btn btn-small"
-                  type="button"
-                  onClick={() => setShowPassword((previous) => !previous)}
-                >
-                  {showPassword ? "Hide" : "Show"}
-                </button>
-              </div>
-            </label>
-
-            {mode === "signup" && (
-              <>
-                <label className="form-field">
-                  <span>Confirm password</span>
-                  <div className="password-input-row">
-                    <input
-                      className="input"
-                      type={showConfirmPassword ? "text" : "password"}
-                      value={confirmPassword}
-                      onChange={(event) =>
-                        setConfirmPassword(event.target.value)
-                      }
-                      required
-                    />
-                    <button
-                      className="btn btn-small"
-                      type="button"
-                      onClick={() =>
-                        setShowConfirmPassword((previous) => !previous)
-                      }
-                    >
-                      {showConfirmPassword ? "Hide" : "Show"}
-                    </button>
-                  </div>
-                </label>
-
-                <div className="auth-requirements text-muted">
-                  <div>
-                    {passwordPolicy.minLengthOk ? "✓" : "•"} Minimum 12
-                    characters
-                  </div>
-                  <div>
-                    {passwordPolicy.specialCharacterOk ? "✓" : "•"} At least one
-                    special character
-                  </div>
-                  <div>
-                    {passwordPolicy.confirmOk ? "✓" : "•"} Passwords match
-                  </div>
-                </div>
-              </>
-            )}
+            <PasswordFields
+              key={mode}
+              password={password}
+              confirmPassword={confirmPassword}
+              onPasswordChange={setPassword}
+              onConfirmPasswordChange={setConfirmPassword}
+              withConfirmation={mode === "signup"}
+              policy={passwordPolicy}
+              autoComplete={
+                mode === "signup" ? "new-password" : "current-password"
+              }
+            />
 
             <div className="table-actions auth-actions">
               <button
                 className="btn"
                 type="submit"
-                disabled={!hasSupabaseCredentials}
+                disabled={!hasSupabaseCredentials || isSubmitting}
               >
-                {mode === "login" ? "Login" : "Sign up"}
+                {isSubmitting
+                  ? "Please wait..."
+                  : mode === "login"
+                    ? "Login"
+                    : "Sign up"}
               </button>
 
               {mode === "login" && (
@@ -344,7 +485,7 @@ function AuthPage() {
                   className="btn"
                   type="button"
                   onClick={handleResetPassword}
-                  disabled={!hasSupabaseCredentials || !email}
+                  disabled={!hasSupabaseCredentials || !email || isSubmitting}
                 >
                   Reset password
                 </button>

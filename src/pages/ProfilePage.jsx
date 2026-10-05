@@ -1,12 +1,22 @@
 import { format } from "date-fns";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import CategoryModal from "../components/CategoryModal";
-import { DETAILED_CATEGORIES, PROFILE_TABS } from "../lib/categories";
+import { useCategoryModal } from "../hooks/useCategoryModal";
 import {
+  collectPlaceOptions,
+  DETAILED_CATEGORIES,
+  getCategoryLabel,
+  getDetailsPreview,
+  PROFILE_TABS,
+} from "../lib/categories";
+import { NOTE_MAX_LENGTH, validateNote } from "../lib/notes";
+import { firstRelation } from "../lib/utils";
+import {
+  applyLogChange,
   getUserLogs,
   removeUserLogCategory,
-  upsertUserLogCategory,
+  setUserLogCategory,
 } from "../services/logService";
 import {
   deleteProfileNote,
@@ -14,16 +24,8 @@ import {
   insertProfileNote,
 } from "../services/noteService";
 
-const NOTE_MAX_LENGTH = 500;
-
 function getComposerName(work) {
-  const composer = work?.composers;
-
-  if (Array.isArray(composer)) {
-    return composer[0]?.name || "Unknown composer";
-  }
-
-  return composer?.name || "Unknown composer";
+  return firstRelation(work?.composers)?.name || "Unknown composer";
 }
 
 function ProfilePage() {
@@ -35,16 +37,13 @@ function ProfilePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isNotesLoading, setIsNotesLoading] = useState(false);
   const [isSavingNote, setIsSavingNote] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
-  const [modalState, setModalState] = useState({
-    isOpen: false,
-    category: null,
-    workId: null,
-    workTitle: "",
-    initialValues: {},
-  });
+  const { modal, openModal, closeModal } = useCategoryModal();
 
   useEffect(() => {
+    let ignore = false;
+
     async function loadLogs() {
       if (!user?.id) {
         setLogs([]);
@@ -61,18 +60,30 @@ function ProfilePage() {
           getProfileNotes(user.id),
         ]);
 
-        setLogs(logsData);
-        setNotes(notesData);
+        if (!ignore) {
+          setLogs(logsData);
+          setNotes(notesData);
+        }
       } catch (loadError) {
-        setError(loadError.message);
+        if (!ignore) {
+          setError(loadError.message);
+        }
       } finally {
-        setIsLoading(false);
-        setIsNotesLoading(false);
+        if (!ignore) {
+          setIsLoading(false);
+          setIsNotesLoading(false);
+        }
       }
     }
 
     loadLogs();
+
+    return () => {
+      ignore = true;
+    };
   }, [user?.id]);
+
+  const placeOptions = useMemo(() => collectPlaceOptions(logs), [logs]);
 
   const rows = useMemo(() => {
     if (activeTab === "notes") {
@@ -109,15 +120,6 @@ function ProfilePage() {
     );
   }, [logs, activeTab]);
 
-  async function refreshLogs() {
-    if (!user?.id) {
-      return;
-    }
-
-    const data = await getUserLogs(user.id);
-    setLogs(data);
-  }
-
   async function refreshNotes() {
     if (!user?.id) {
       return;
@@ -133,41 +135,43 @@ function ProfilePage() {
     }
 
     try {
-      await removeUserLogCategory({
-        userId: user.id,
+      const updatedLog = await removeUserLogCategory({
         workId: row.workId,
         category: row.category,
       });
-      await refreshLogs();
+      setLogs((previous) => applyLogChange(previous, row.workId, updatedLog));
     } catch (deleteError) {
       setError(deleteError.message);
     }
   }
 
   async function handleEditSave(values) {
-    if (!user?.id || !modalState.workId || !modalState.category) {
+    if (!user?.id || !modal.workId || !modal.category) {
       return;
     }
 
+    setIsSaving(true);
+
     try {
-      await upsertUserLogCategory({
-        userId: user.id,
-        workId: modalState.workId,
-        category: modalState.category,
+      const updatedLog = await setUserLogCategory({
+        workId: modal.workId,
+        category: modal.category,
         details: values,
       });
-      setModalState({
-        isOpen: false,
-        category: null,
-        workId: null,
-        workTitle: "",
-        initialValues: {},
-      });
-      await refreshLogs();
+      setLogs((previous) => applyLogChange(previous, modal.workId, updatedLog));
+      closeModal();
     } catch (saveError) {
       setError(saveError.message);
+    } finally {
+      setIsSaving(false);
     }
   }
+
+  const handleModalClose = useCallback(() => {
+    if (!isSaving) {
+      closeModal();
+    }
+  }, [closeModal, isSaving]);
 
   async function handleAddNote(event) {
     event.preventDefault();
@@ -176,15 +180,10 @@ function ProfilePage() {
       return;
     }
 
-    const normalizedNote = noteDraft.trim();
+    const validation = validateNote(noteDraft);
 
-    if (!normalizedNote) {
-      setError("Write a note before saving.");
-      return;
-    }
-
-    if (normalizedNote.length > NOTE_MAX_LENGTH) {
-      setError("Note must be 500 characters or fewer.");
+    if (validation.error) {
+      setError(validation.error);
       return;
     }
 
@@ -194,7 +193,7 @@ function ProfilePage() {
     try {
       await insertProfileNote({
         userId: user.id,
-        note: normalizedNote,
+        note: validation.note,
       });
       setNoteDraft("");
       await refreshNotes();
@@ -219,21 +218,6 @@ function ProfilePage() {
     } catch (deleteError) {
       setError(deleteError.message);
     }
-  }
-
-  function getDetailsPreview(row) {
-    if (!DETAILED_CATEGORIES.includes(row.category)) {
-      return "Flag only";
-    }
-
-    const details = row.details || {};
-    const values = Object.values(details).filter(Boolean);
-
-    if (values.length === 0) {
-      return "No details yet";
-    }
-
-    return values.slice(0, 3).join(" · ");
   }
 
   if (!user) {
@@ -263,6 +247,7 @@ function ProfilePage() {
           <button
             key={tab.key}
             className={`tab-btn ${activeTab === tab.key ? "active" : ""}`}
+            type="button"
             onClick={() => setActiveTab(tab.key)}
             role="tab"
             aria-selected={activeTab === tab.key}
@@ -355,21 +340,21 @@ function ProfilePage() {
               <tr key={row.id}>
                 <td>{row.work?.title || "Untitled work"}</td>
                 <td>{getComposerName(row.work)}</td>
-                <td>{row.category}</td>
-                <td>{getDetailsPreview(row)}</td>
+                <td>{getCategoryLabel(row.category)}</td>
+                <td>{getDetailsPreview(row.category, row.details)}</td>
                 <td>{format(new Date(row.updatedAt), "yyyy-MM-dd")}</td>
                 <td>
                   <div className="table-actions">
                     {DETAILED_CATEGORIES.includes(row.category) && (
                       <button
                         className="btn btn-small"
+                        type="button"
                         onClick={() =>
-                          setModalState({
-                            isOpen: true,
+                          openModal({
                             category: row.category,
                             workId: row.workId,
-                            workTitle: row.work?.title || "",
-                            initialValues: row.details || {},
+                            workTitle: row.work?.title,
+                            initialValues: row.details,
                           })
                         }
                       >
@@ -379,6 +364,7 @@ function ProfilePage() {
 
                     <button
                       className="btn btn-small"
+                      type="button"
                       onClick={() => handleDelete(row)}
                     >
                       Delete
@@ -399,22 +385,18 @@ function ProfilePage() {
         </table>
       )}
 
-      <CategoryModal
-        isOpen={modalState.isOpen}
-        category={modalState.category}
-        workTitle={modalState.workTitle}
-        initialValues={modalState.initialValues}
-        onClose={() =>
-          setModalState({
-            isOpen: false,
-            category: null,
-            workId: null,
-            workTitle: "",
-            initialValues: {},
-          })
-        }
-        onSave={handleEditSave}
-      />
+      {modal.isOpen && (
+        <CategoryModal
+          key={modal.openKey}
+          category={modal.category}
+          workTitle={modal.workTitle}
+          initialValues={modal.initialValues}
+          placeOptions={placeOptions}
+          isSaving={isSaving}
+          onClose={handleModalClose}
+          onSave={handleEditSave}
+        />
+      )}
     </main>
   );
 }

@@ -234,3 +234,33 @@
   - `.github/workflows/keepalive.yml`: nightly ping (02:00 UTC) to the Supabase REST endpoint to prevent the Free-tier project from pausing after a week of inactivity
   - `.github/workflows/backup.yml`: weekly (Sunday 03:11 UTC) `pg_dump` of the database via the Supabase connection pooler, uploaded as a 30-day-retention workflow artifact (Supabase Free keeps no backups of its own)
 - Documented required repo-level Variables (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`) and Secrets (`SUPABASE_DB_URL`) for these workflows in `README.md`
+
+## update_n22 (2026-10-05)
+
+Audit follow-up: security, correctness, performance and cleanup.
+
+- Auth:
+  - password reset now works end to end: the email link returns to `/auth?mode=recovery`, the app handles the `PASSWORD_RECOVERY` event and shows a `New password` form
+  - auth buttons are disabled while a request is in flight; shared password policy helper
+  - AppShell takes the user from auth events instead of calling `getUser()` on every event
+- Edge Function `wikipedia-enrichment`:
+  - `force` is admin-only (`ENRICHMENT_ADMIN_SECRET`), CORS limited to `ALLOWED_ORIGINS`, UUID/method validation, generic error responses
+  - per-composer throttle (`composers.enrichment_attempted_at`, one lookup every 7 days) so the public function cannot be used to hammer Wikipedia
+  - split into `handler.ts` / `wikipedia.ts` with Deno tests; JWT verification recommended on
+- Database (`migrations/202610050001_hardening_rpc_views.sql`, mirrored in `schema.sql`):
+  - atomic RPCs for categories (`set_/remove_/toggle_user_log_category`) replace the client read-modify-write that could lose data on double clicks
+  - `generate_daily_recommendation(p_day)` picks the work server-side for the visitor's local day
+  - `works_index`, `composer_epochs`, `work_genres` views for server-side Zibaldone paging
+  - `user_logs.details` must be an object of max 16 KB; extra indexes; `schema.sql` is now idempotent
+- Frontend:
+  - route-level code splitting (initial JS 855 KB → 247 KB; Recharts only on Discover)
+  - Zibaldone filters/sorts/paginates in the database with a debounced, escaped search
+  - Browse/Composer/Profile fetch only the columns and logs they need; updates are applied from RPC results instead of full reloads
+  - stale responses are ignored when navigating; Composer view is keyed by composer id
+  - CategoryModal: no more stale unsaved values after cancel, Escape to close, labelled dialog, saving state
+  - Profile details preview no longer shows `[object Object]`; Stats year no longer shifts with timezone
+  - unified labels (`Attended`, `Favorite`, `Record`, `Alert`) and shared helpers (categories, notes, pagination, modal state)
+- Security headers and caching in `netlify.toml` (CSP, frame/referrer/permissions policies, HSTS, immutable assets)
+- Backup workflow: verifies the dump before upload and encrypts it with `BACKUP_PASSPHRASE`
+- CI workflow (`ci.yml`): lint, Vitest, build, npm audit, SQL schema/RLS/RPC tests on Postgres, Deno tests
+- Dependencies updated (`npm audit`: 0 vulnerabilities); removed unused `unplugin-auto-import`, assets and stray files; `supabase/.temp` is no longer tracked

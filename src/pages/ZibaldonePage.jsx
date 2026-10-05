@@ -1,26 +1,27 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import IconStreamlineUltimateInformationCircleBold from "~icons/streamline-ultimate/information-circle-bold";
-import { getWorksIndex } from "../services/catalogService";
+import Pagination from "../components/Pagination";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import { hasSupabaseCredentials } from "../lib/supabaseClient";
+import {
+  getWorkFilterOptions,
+  getWorksPage,
+  WORK_SORT_COLUMNS,
+} from "../services/catalogService";
 import {
   generateDailyRecommendation,
   getDailyRecommendation,
 } from "../services/recommendationService";
 
-const SORTABLE_COLUMNS = {
-  title: "title",
-  composer: "composer",
-  epoch: "epoch",
-  genre: "genre",
-};
-
-function normalizeValue(value) {
-  return (value || "").toString().toLowerCase();
-}
+const SORTABLE_COLUMNS = Object.fromEntries(
+  Object.keys(WORK_SORT_COLUMNS).map((key) => [key, key]),
+);
 
 function ZibaldonePage() {
   const { user } = useOutletContext();
-  const [works, setWorks] = useState([]);
+  const [result, setResult] = useState({ rows: [], count: 0 });
+  const [filterOptions, setFilterOptions] = useState({ epochs: [], genres: [] });
   const [query, setQuery] = useState("");
   const [epochFilter, setEpochFilter] = useState("all");
   const [genreFilter, setGenreFilter] = useState("all");
@@ -28,31 +29,80 @@ function ZibaldonePage() {
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState(SORTABLE_COLUMNS.title);
   const [sortDirection, setSortDirection] = useState("asc");
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(hasSupabaseCredentials);
   const [isRecommendationLoading, setIsRecommendationLoading] = useState(false);
   const [isGeneratingRecommendation, setIsGeneratingRecommendation] =
     useState(false);
   const [dailyRecommendation, setDailyRecommendation] = useState(null);
   const [error, setError] = useState("");
+  const debouncedQuery = useDebouncedValue(query, 300);
 
   useEffect(() => {
-    async function loadIndex() {
-      try {
-        setIsLoading(true);
-        setError("");
-        const data = await getWorksIndex();
-        setWorks(data);
-      } catch (loadError) {
-        setError(loadError.message);
-      } finally {
-        setIsLoading(false);
-      }
-    }
+    let ignore = false;
 
-    loadIndex();
+    getWorkFilterOptions()
+      .then((options) => {
+        if (!ignore) {
+          setFilterOptions(options);
+        }
+      })
+      .catch((loadError) => {
+        if (!ignore) {
+          setError(loadError.message);
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   useEffect(() => {
+    if (!hasSupabaseCredentials) {
+      return undefined;
+    }
+
+    let ignore = false;
+
+    async function loadPage() {
+      setIsLoading(true);
+
+      try {
+        const data = await getWorksPage({
+          query: debouncedQuery,
+          epoch: epochFilter,
+          genre: genreFilter,
+          sortBy,
+          sortDirection,
+          page,
+          pageSize,
+        });
+
+        if (!ignore) {
+          setResult(data);
+          setError("");
+        }
+      } catch (loadError) {
+        if (!ignore) {
+          setError(loadError.message);
+        }
+      } finally {
+        if (!ignore) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    loadPage();
+
+    return () => {
+      ignore = true;
+    };
+  }, [debouncedQuery, epochFilter, genreFilter, sortBy, sortDirection, page, pageSize]);
+
+  useEffect(() => {
+    let ignore = false;
+
     async function loadDailyRecommendation() {
       if (!user?.id) {
         setDailyRecommendation(null);
@@ -65,20 +115,27 @@ function ZibaldonePage() {
         const recommendation = await getDailyRecommendation({
           userId: user.id,
         });
-        setDailyRecommendation(recommendation);
+
+        if (!ignore) {
+          setDailyRecommendation(recommendation);
+        }
       } catch (recommendationError) {
-        setError(recommendationError.message);
+        if (!ignore) {
+          setError(recommendationError.message);
+        }
       } finally {
-        setIsRecommendationLoading(false);
+        if (!ignore) {
+          setIsRecommendationLoading(false);
+        }
       }
     }
 
     loadDailyRecommendation();
-  }, [user?.id]);
 
-  useEffect(() => {
-    setPage(1);
-  }, [query, epochFilter, genreFilter, pageSize, sortBy, sortDirection]);
+    return () => {
+      ignore = true;
+    };
+  }, [user?.id]);
 
   async function handleGenerateRecommendation() {
     if (!user?.id) {
@@ -90,9 +147,8 @@ function ZibaldonePage() {
     setIsGeneratingRecommendation(true);
 
     try {
-      const { recommendation } = await generateDailyRecommendation({
+      const recommendation = await generateDailyRecommendation({
         userId: user.id,
-        works,
       });
 
       setDailyRecommendation(recommendation);
@@ -103,84 +159,21 @@ function ZibaldonePage() {
     }
   }
 
-  const availableEpochs = useMemo(() => {
-    const values = new Set();
+  // Every filter change goes back to the first page.
+  function updateFilter(setter) {
+    return (value) => {
+      setter(value);
+      setPage(1);
+    };
+  }
 
-    works.forEach((work) => {
-      if (work.composer?.epoch) {
-        values.add(work.composer.epoch);
-      }
-    });
-
-    return Array.from(values).sort((left, right) => left.localeCompare(right));
-  }, [works]);
-
-  const availableGenres = useMemo(() => {
-    const values = new Set();
-
-    works.forEach((work) => {
-      if (work.genre) {
-        values.add(work.genre);
-      }
-    });
-
-    return Array.from(values).sort((left, right) => left.localeCompare(right));
-  }, [works]);
-
-  const filteredWorks = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-
-    const filtered = works.filter((work) => {
-      const matchesQuery =
-        !normalizedQuery ||
-        normalizeValue(work.title).includes(normalizedQuery) ||
-        normalizeValue(work.composer?.name).includes(normalizedQuery);
-
-      const matchesEpoch =
-        epochFilter === "all" || work.composer?.epoch === epochFilter;
-      const matchesGenre = genreFilter === "all" || work.genre === genreFilter;
-
-      return matchesQuery && matchesEpoch && matchesGenre;
-    });
-
-    const sorted = [...filtered].sort((left, right) => {
-      const leftValue =
-        sortBy === SORTABLE_COLUMNS.composer
-          ? normalizeValue(left.composer?.name)
-          : sortBy === SORTABLE_COLUMNS.epoch
-            ? normalizeValue(left.composer?.epoch)
-            : normalizeValue(left[sortBy]);
-
-      const rightValue =
-        sortBy === SORTABLE_COLUMNS.composer
-          ? normalizeValue(right.composer?.name)
-          : sortBy === SORTABLE_COLUMNS.epoch
-            ? normalizeValue(right.composer?.epoch)
-            : normalizeValue(right[sortBy]);
-
-      if (leftValue < rightValue) {
-        return sortDirection === "asc" ? -1 : 1;
-      }
-
-      if (leftValue > rightValue) {
-        return sortDirection === "asc" ? 1 : -1;
-      }
-
-      return 0;
-    });
-
-    return sorted;
-  }, [works, query, epochFilter, genreFilter, sortBy, sortDirection]);
-
-  const totalPages = Math.max(1, Math.ceil(filteredWorks.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(result.count / pageSize));
   const currentPage = Math.min(page, totalPages);
-
-  const pagedWorks = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    return filteredWorks.slice(start, start + pageSize);
-  }, [filteredWorks, currentPage, pageSize]);
+  const pagedWorks = result.rows;
 
   function toggleSort(columnKey) {
+    setPage(1);
+
     if (sortBy === columnKey) {
       setSortDirection((previous) => (previous === "asc" ? "desc" : "asc"));
       return;
@@ -213,9 +206,7 @@ function ZibaldonePage() {
             className="btn"
             type="button"
             onClick={handleGenerateRecommendation}
-            disabled={
-              isGeneratingRecommendation || isLoading || works.length === 0
-            }
+            disabled={isGeneratingRecommendation || !user}
           >
             {isGeneratingRecommendation
               ? "Generating..."
@@ -223,7 +214,7 @@ function ZibaldonePage() {
           </button>
           <span
             className="recommendation-info-icon"
-            title="It can be generated only once per day. The same recommendation is shown until 23:59."
+            title="It can be generated only once per day. The same recommendation is shown until midnight (your local time)."
             aria-label="Daily recommendation info"
           >
             <IconStreamlineUltimateInformationCircleBold
@@ -239,7 +230,7 @@ function ZibaldonePage() {
         <p className="text-muted">Loading your daily recommendation...</p>
       ) : dailyRecommendation?.work ? (
         <section className="daily-recommendation-card">
-          <h2>Today recommendation</h2>
+          <h2>Today&apos;s recommendation</h2>
           <p>
             <strong>{dailyRecommendation.work.title}</strong>
             {" · "}
@@ -261,16 +252,16 @@ function ZibaldonePage() {
           type="search"
           placeholder="Search by opus title or composer"
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          onChange={(event) => updateFilter(setQuery)(event.target.value)}
         />
 
         <select
           className="select"
           value={epochFilter}
-          onChange={(event) => setEpochFilter(event.target.value)}
+          onChange={(event) => updateFilter(setEpochFilter)(event.target.value)}
         >
           <option value="all">All epochs</option>
-          {availableEpochs.map((epoch) => (
+          {filterOptions.epochs.map((epoch) => (
             <option key={epoch} value={epoch}>
               {epoch}
             </option>
@@ -280,10 +271,10 @@ function ZibaldonePage() {
         <select
           className="select"
           value={genreFilter}
-          onChange={(event) => setGenreFilter(event.target.value)}
+          onChange={(event) => updateFilter(setGenreFilter)(event.target.value)}
         >
           <option value="all">All genres</option>
-          {availableGenres.map((genre) => (
+          {filterOptions.genres.map((genre) => (
             <option key={genre} value={genre}>
               {genre}
             </option>
@@ -293,7 +284,9 @@ function ZibaldonePage() {
         <select
           className="select"
           value={pageSize}
-          onChange={(event) => setPageSize(Number(event.target.value))}
+          onChange={(event) =>
+            updateFilter(setPageSize)(Number(event.target.value))
+          }
         >
           <option value={10}>10 / page</option>
           <option value={25}>25 / page</option>
@@ -312,13 +305,14 @@ function ZibaldonePage() {
         </div>
       ) : (
         <>
-          <p className="text-muted">{filteredWorks.length} works found.</p>
+          <p className="text-muted">{result.count} works found.</p>
           <table className="table">
             <thead>
               <tr>
                 <th>
                   <button
                     className="table-sort-btn"
+                    type="button"
                     onClick={() => toggleSort(SORTABLE_COLUMNS.title)}
                   >
                     {sortLabel(SORTABLE_COLUMNS.title, "Opus")}
@@ -327,6 +321,7 @@ function ZibaldonePage() {
                 <th>
                   <button
                     className="table-sort-btn"
+                    type="button"
                     onClick={() => toggleSort(SORTABLE_COLUMNS.composer)}
                   >
                     {sortLabel(SORTABLE_COLUMNS.composer, "Composer")}
@@ -335,6 +330,7 @@ function ZibaldonePage() {
                 <th>
                   <button
                     className="table-sort-btn"
+                    type="button"
                     onClick={() => toggleSort(SORTABLE_COLUMNS.epoch)}
                   >
                     {sortLabel(SORTABLE_COLUMNS.epoch, "Epoch")}
@@ -343,6 +339,7 @@ function ZibaldonePage() {
                 <th>
                   <button
                     className="table-sort-btn"
+                    type="button"
                     onClick={() => toggleSort(SORTABLE_COLUMNS.genre)}
                   >
                     {sortLabel(SORTABLE_COLUMNS.genre, "Genre")}
@@ -355,14 +352,14 @@ function ZibaldonePage() {
               {pagedWorks.map((work) => (
                 <tr key={work.id}>
                   <td>{work.title}</td>
-                  <td>{work.composer?.name || "Unknown composer"}</td>
-                  <td>{work.composer?.epoch || "Unknown"}</td>
+                  <td>{work.composer_name || "Unknown composer"}</td>
+                  <td>{work.composer_epoch || "Unknown"}</td>
                   <td>{work.genre || "Unknown"}</td>
                   <td>
-                    {work.composer?.id ? (
+                    {work.composer_id ? (
                       <Link
                         className="btn btn-small"
-                        to={`/composer/${work.composer.id}`}
+                        to={`/composer/${work.composer_id}`}
                       >
                         Open
                       </Link>
@@ -383,27 +380,11 @@ function ZibaldonePage() {
             </tbody>
           </table>
 
-          <div className="pagination-row">
-            <button
-              className="btn btn-small"
-              disabled={currentPage <= 1}
-              onClick={() => setPage((previous) => Math.max(1, previous - 1))}
-            >
-              Prev
-            </button>
-            <span className="text-muted">
-              Page {currentPage} / {totalPages}
-            </span>
-            <button
-              className="btn btn-small"
-              disabled={currentPage >= totalPages}
-              onClick={() =>
-                setPage((previous) => Math.min(totalPages, previous + 1))
-              }
-            >
-              Next
-            </button>
-          </div>
+          <Pagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            onPageChange={setPage}
+          />
         </>
       )}
     </main>

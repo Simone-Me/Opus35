@@ -1,10 +1,7 @@
+import { validateNote } from "../lib/notes";
 import { hasSupabaseCredentials, supabase } from "../lib/supabaseClient";
 
-const NOTE_MAX_LENGTH = 500;
-
-function normalizeNote(note) {
-  return (note || "").trim();
-}
+const NOTE_COLUMNS = "id,user_id,note,created_at,updated_at";
 
 export async function getProfileNotes(userId) {
   if (!hasSupabaseCredentials || !userId) {
@@ -13,7 +10,7 @@ export async function getProfileNotes(userId) {
 
   const { data, error } = await supabase
     .from("profile_notes")
-    .select("id,user_id,note,created_at,updated_at")
+    .select(NOTE_COLUMNS)
     .eq("user_id", userId)
     .order("updated_at", { ascending: false });
 
@@ -29,23 +26,19 @@ export async function insertProfileNote({ userId, note }) {
     throw new Error("Supabase credentials are required to save notes.");
   }
 
-  const normalizedNote = normalizeNote(note);
+  const validation = validateNote(note);
 
-  if (!normalizedNote) {
-    throw new Error("Write a note before saving.");
-  }
-
-  if (normalizedNote.length > NOTE_MAX_LENGTH) {
-    throw new Error("Note must be 500 characters or fewer.");
+  if (validation.error) {
+    throw new Error(validation.error);
   }
 
   const { data, error } = await supabase
     .from("profile_notes")
     .insert({
       user_id: userId,
-      note: normalizedNote,
+      note: validation.note,
     })
-    .select("id,user_id,note,created_at,updated_at")
+    .select(NOTE_COLUMNS)
     .single();
 
   if (error) {

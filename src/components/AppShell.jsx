@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { Link, NavLink, Outlet } from "react-router-dom";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { getContactEmail } from "../lib/contact";
 import { hasSupabaseCredentials, supabase } from "../lib/supabaseClient";
 
@@ -18,6 +18,14 @@ function AppShell() {
   const [copyNotice, setCopyNotice] = useState("");
   const contactEmail = getContactEmail();
   const logoutArmTimerRef = useRef(null);
+  const copyNoticeTimerRef = useRef(null);
+  const navigate = useNavigate();
+
+  function showCopyNotice(message) {
+    clearTimeout(copyNoticeTimerRef.current);
+    setCopyNotice(message);
+    copyNoticeTimerRef.current = setTimeout(() => setCopyNotice(""), 1800);
+  }
 
   async function handleCopyContactEmail() {
     try {
@@ -32,11 +40,9 @@ function AppShell() {
         document.body.removeChild(input);
       }
 
-      setCopyNotice("Email copied");
-      setTimeout(() => setCopyNotice(""), 1800);
+      showCopyNotice("Email copied");
     } catch {
-      setCopyNotice("Copy failed");
-      setTimeout(() => setCopyNotice(""), 1800);
+      showCopyNotice("Copy failed");
     }
   }
 
@@ -93,32 +99,29 @@ function AppShell() {
       return undefined;
     }
 
-    let isMounted = true;
-
-    async function loadUser() {
-      const { data } = await supabase.auth.getUser();
-      if (isMounted) {
-        setUser(data.user || null);
-        setIsAuthLoading(false);
-      }
-    }
-
-    loadUser();
-
+    // The session comes with the event (INITIAL_SESSION on subscribe), so no
+    // extra network round trip per auth event.
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(() => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user || null);
+      setIsAuthLoading(false);
       setAuthError("");
-      resetLogoutArm();
-      loadUser();
+      clearTimeout(logoutArmTimerRef.current);
+      logoutArmTimerRef.current = null;
+      setIsLogoutArmed(false);
+
+      if (event === "PASSWORD_RECOVERY") {
+        navigate("/auth?mode=recovery", { replace: true });
+      }
     });
 
     return () => {
-      isMounted = false;
-      clearLogoutArmTimer();
+      clearTimeout(logoutArmTimerRef.current);
+      clearTimeout(copyNoticeTimerRef.current);
       subscription.unsubscribe();
     };
-  }, []);
+  }, [navigate]);
 
   return (
     <div className="app-shell">
@@ -174,7 +177,16 @@ function AppShell() {
         {authError && <div className="alert error">{authError}</div>}
       </header>
 
-      <Outlet context={{ user, isAuthLoading }} />
+      <Suspense
+        fallback={
+          <main className="page" aria-busy="true">
+            <div className="skeleton skeleton-title" />
+            <div className="skeleton skeleton-line" />
+          </main>
+        }
+      >
+        <Outlet context={{ user, isAuthLoading }} />
+      </Suspense>
 
       <footer className="app-footer" aria-label="App and sources">
         <div className="footer-top-grid">
@@ -185,8 +197,8 @@ function AppShell() {
           >
             <h3 className="footer-heading">Contact</h3>
             <p className="footer-contact-text">
-              Contact us, suggest an artist, report a bug, others informations
-              or make a donation:
+              Contact us to suggest an artist, report a bug, ask for more
+              information or make a donation:
             </p>
             <div className="footer-email-row">
               <span className="footer-email-value">{contactEmail}</span>

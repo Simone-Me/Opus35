@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useOutletContext, useParams } from "react-router-dom";
 import IconStreamlineUltimateBinocular from "~icons/streamline-ultimate/binocular";
 import IconStreamlineUltimateCdPlaying from "~icons/streamline-ultimate/cd-playing";
@@ -6,12 +6,18 @@ import IconStreamlineUltimateMusicOnOff1 from "~icons/streamline-ultimate/music-
 import IconStreamlineUltimateSafetyDrownHand from "~icons/streamline-ultimate/safety-drown-hand";
 import IconStreamlineUltimateSmileySmile1Bold from "~icons/streamline-ultimate/smiley-smile-1-bold";
 import CategoryModal from "../components/CategoryModal";
+import Pagination from "../components/Pagination";
+import { useCategoryModal } from "../hooks/useCategoryModal";
 import {
   CATEGORIES,
   CATEGORY_ORDER,
+  collectPlaceOptions,
   DETAILED_CATEGORIES,
+  getCategoryLabel,
 } from "../lib/categories";
+import { NOTE_MAX_LENGTH, validateNote } from "../lib/notes";
 import { hasSupabaseCredentials } from "../lib/supabaseClient";
+import { uniqueSorted } from "../lib/utils";
 import {
   enrichComposerFromWikipedia,
   getComposerById,
@@ -23,53 +29,35 @@ import {
   upsertComposerNote,
 } from "../services/composerNoteService";
 import {
-  getUserLogs,
+  applyLogChange,
+  getUserLogsForComposer,
+  getUserPlaceLogs,
   removeUserLogCategory,
+  setUserLogCategory,
   toggleUserLogCategory,
-  upsertUserLogCategory,
 } from "../services/logService";
 
-const COMPOSER_NOTE_MAX_LENGTH = 500;
-const WORK_ACTION_FILTERS = ["heard", "favorite", "bought", "alert"];
-
-const WORK_ACTION_METADATA = {
-  heard: {
-    icon: IconStreamlineUltimateBinocular,
-    actionLabel: "attended",
-    filterLabel: "Attended",
-    hint: "attended a performance of the opus",
-  },
-  bought: {
-    icon: IconStreamlineUltimateCdPlaying,
-    actionLabel: "own",
-    filterLabel: "Record",
-    hint: "bought a recording of the opus",
-  },
-  favorite: {
-    icon: IconStreamlineUltimateSmileySmile1Bold,
-    actionLabel: "favorite",
-    filterLabel: "Favorite",
-    hint: "marked as a favorite",
-  },
-  alert: {
-    icon: IconStreamlineUltimateSafetyDrownHand,
-    actionLabel: "alert",
-    filterLabel: "Alert",
-    hint: "interested to go to a performance or buy a record",
-  },
+const CATEGORY_ICONS = {
+  heard: IconStreamlineUltimateBinocular,
+  bought: IconStreamlineUltimateCdPlaying,
+  favorite: IconStreamlineUltimateSmileySmile1Bold,
+  alert: IconStreamlineUltimateSafetyDrownHand,
 };
 
-function getShortBio(value) {
-  return (value || "").trim();
-}
-
+// Keyed by composerId: navigating to another composer remounts the view, so
+// every filter, tab and pending request of the previous composer is dropped.
 function ComposerPage() {
   const { composerId } = useParams();
+  return <ComposerView key={composerId} composerId={composerId} />;
+}
+
+function ComposerView({ composerId }) {
   const { user } = useOutletContext();
 
   const [composer, setComposer] = useState(null);
   const [works, setWorks] = useState([]);
   const [logs, setLogs] = useState([]);
+  const [placeLogs, setPlaceLogs] = useState([]);
 
   const [query, setQuery] = useState("");
   const [genreFilter, setGenreFilter] = useState("all");
@@ -83,78 +71,92 @@ function ComposerPage() {
   const [isComposerNoteLoading, setIsComposerNoteLoading] = useState(false);
   const [isComposerNoteSaving, setIsComposerNoteSaving] = useState(false);
 
-  const [isLoading, setIsLoading] = useState(true);
-  const [isWorksLoading, setIsWorksLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(hasSupabaseCredentials);
   const [isSaving, setIsSaving] = useState(false);
+  const [pendingWorkIds, setPendingWorkIds] = useState(() => new Set());
   const [isEnriching, setIsEnriching] = useState(false);
-  const [hasTriedEnrichment, setHasTriedEnrichment] = useState(false);
   const [enrichmentNotice, setEnrichmentNotice] = useState("");
   const [isBioExpanded, setIsBioExpanded] = useState(false);
   const [canExpandBio, setCanExpandBio] = useState(false);
 
   const [error, setError] = useState("");
   const bioRef = useRef(null);
-
-  const [modalState, setModalState] = useState({
-    isOpen: false,
-    category: null,
-    workId: null,
-    workTitle: "",
-    initialValues: {},
-  });
+  const enrichmentRequestedRef = useRef(false);
+  const { modal, openModal, closeModal } = useCategoryModal();
 
   useEffect(() => {
+    if (!hasSupabaseCredentials) {
+      return undefined;
+    }
+
+    let ignore = false;
+
     async function loadComposerPageData() {
-      if (!hasSupabaseCredentials) {
-        setIsLoading(false);
-        setIsWorksLoading(false);
-        return;
-      }
-
-      setIsLoading(true);
-      setIsWorksLoading(true);
-      setError("");
-      setEnrichmentNotice("");
-
       try {
         const [composerData, worksData] = await Promise.all([
           getComposerById(composerId),
           getWorksByComposerId(composerId),
         ]);
 
-        setComposer(composerData || null);
-        setWorks(worksData || []);
+        if (!ignore) {
+          setComposer(composerData || null);
+          setWorks(worksData || []);
+        }
       } catch (loadError) {
-        setError(loadError.message);
+        if (!ignore) {
+          setError(loadError.message);
+        }
       } finally {
-        setIsLoading(false);
-        setIsWorksLoading(false);
+        if (!ignore) {
+          setIsLoading(false);
+        }
       }
     }
 
-    setHasTriedEnrichment(false);
     loadComposerPageData();
+
+    return () => {
+      ignore = true;
+    };
   }, [composerId]);
 
   useEffect(() => {
+    let ignore = false;
+
     async function loadLogs() {
       if (!user?.id) {
         setLogs([]);
+        setPlaceLogs([]);
         return;
       }
 
       try {
-        const data = await getUserLogs(user.id);
-        setLogs(data);
+        const [composerLogs, userPlaceLogs] = await Promise.all([
+          getUserLogsForComposer(user.id, composerId),
+          getUserPlaceLogs(user.id),
+        ]);
+
+        if (!ignore) {
+          setLogs(composerLogs);
+          setPlaceLogs(userPlaceLogs);
+        }
       } catch (loadError) {
-        setError(loadError.message);
+        if (!ignore) {
+          setError(loadError.message);
+        }
       }
     }
 
     loadLogs();
-  }, [user?.id]);
+
+    return () => {
+      ignore = true;
+    };
+  }, [user?.id, composerId]);
 
   useEffect(() => {
+    let ignore = false;
+
     async function loadComposerNote() {
       if (!user?.id || !composer?.id) {
         setComposerNote(null);
@@ -169,75 +171,83 @@ function ComposerPage() {
           userId: user.id,
           composerId: composer.id,
         });
-        setComposerNote(note);
-        setComposerNoteDraft(note?.note || "");
+
+        if (!ignore) {
+          setComposerNote(note);
+          setComposerNoteDraft(note?.note || "");
+        }
       } catch (noteError) {
-        setError(noteError.message);
+        if (!ignore) {
+          setError(noteError.message);
+        }
       } finally {
-        setIsComposerNoteLoading(false);
+        if (!ignore) {
+          setIsComposerNoteLoading(false);
+        }
       }
     }
 
     loadComposerNote();
+
+    return () => {
+      ignore = true;
+    };
   }, [user?.id, composer?.id]);
 
   useEffect(() => {
-    async function enrichComposer() {
-      if (
-        !composer ||
-        composer.bio ||
-        hasTriedEnrichment ||
-        !hasSupabaseCredentials
-      ) {
-        return;
-      }
+    if (
+      !composer ||
+      composer.bio ||
+      enrichmentRequestedRef.current ||
+      !hasSupabaseCredentials
+    ) {
+      return undefined;
+    }
 
-      setHasTriedEnrichment(true);
+    // Once per mounted composer page, whatever the outcome.
+    enrichmentRequestedRef.current = true;
+    let ignore = false;
+
+    async function enrichComposer() {
       setIsEnriching(true);
 
       try {
-        await enrichComposerFromWikipedia(composer.id);
-        const freshComposer = await getComposerById(composer.id);
-        setComposer(freshComposer || composer);
+        const enrichedComposer = await enrichComposerFromWikipedia(composer.id);
+
+        if (!ignore && enrichedComposer?.bio) {
+          setComposer((current) => ({ ...current, ...enrichedComposer }));
+        }
       } catch (enrichError) {
         console.warn("Biography enrichment unavailable", enrichError);
-        setEnrichmentNotice(
-          "Biography enrichment is temporarily unavailable. You can continue browsing works.",
-        );
+
+        if (!ignore) {
+          setEnrichmentNotice(
+            "Biography enrichment is temporarily unavailable. You can continue browsing works.",
+          );
+        }
       } finally {
-        setIsEnriching(false);
+        if (!ignore) {
+          setIsEnriching(false);
+        }
       }
     }
 
     enrichComposer();
-  }, [composer, hasTriedEnrichment]);
 
-  useEffect(() => {
-    setPage(1);
-  }, [query, genreFilter, actionFilters, pageSize]);
-
-  useEffect(() => {
-    setExpandedWorkId(null);
-  }, [composerId]);
-
-  useEffect(() => {
-    setActiveTab("works");
-  }, [composerId]);
-
-  useEffect(() => {
-    setIsBioExpanded(false);
-  }, [composer?.id, composer?.bio]);
+    return () => {
+      ignore = true;
+    };
+  }, [composer]);
 
   useEffect(() => {
     if (isBioExpanded) {
-      return;
+      return undefined;
     }
 
     const element = bioRef.current;
 
     if (!element || !composer?.bio) {
-      setCanExpandBio(false);
-      return;
+      return undefined;
     }
 
     // Delay measurement so layout and line-clamp styles are fully applied.
@@ -259,36 +269,15 @@ function ComposerPage() {
     return map;
   }, [logs]);
 
-  const placeOptions = useMemo(() => {
-    const values = new Set(["Philharmonie de Paris", "Opera de Paris"]);
+  const placeOptions = useMemo(
+    () => collectPlaceOptions([...placeLogs, ...logs]),
+    [placeLogs, logs],
+  );
 
-    logs.forEach((log) => {
-      const heardPlace = log?.details?.heard?.place;
-      const recordPlace = log?.details?.bought?.place;
-
-      if (heardPlace) {
-        values.add(heardPlace);
-      }
-
-      if (recordPlace) {
-        values.add(recordPlace);
-      }
-    });
-
-    return Array.from(values).sort((left, right) => left.localeCompare(right));
-  }, [logs]);
-
-  const availableGenres = useMemo(() => {
-    const values = new Set();
-
-    works.forEach((work) => {
-      if (work.genre) {
-        values.add(work.genre);
-      }
-    });
-
-    return Array.from(values).sort((left, right) => left.localeCompare(right));
-  }, [works]);
+  const availableGenres = useMemo(
+    () => uniqueSorted(works, (work) => work.genre),
+    [works],
+  );
 
   const filteredWorks = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -315,17 +304,8 @@ function ComposerPage() {
     return filteredWorks.slice(start, start + pageSize);
   }, [filteredWorks, currentPage, pageSize]);
 
-  async function refreshLogs() {
-    if (!user?.id) {
-      setLogs([]);
-      return;
-    }
-
-    const data = await getUserLogs(user.id);
-    setLogs(data);
-  }
-
   function handleActionFilterToggle(category) {
+    setPage(1);
     setActionFilters((previous) => {
       if (previous.includes(category)) {
         return previous.filter((value) => value !== category);
@@ -335,56 +315,70 @@ function ComposerPage() {
     });
   }
 
-  async function handleCategoryAction(workId, workTitle, category) {
+  function setWorkPending(workId, isPending) {
+    setPendingWorkIds((previous) => {
+      const next = new Set(previous);
+
+      if (isPending) {
+        next.add(workId);
+      } else {
+        next.delete(workId);
+      }
+
+      return next;
+    });
+  }
+
+  async function handleCategoryAction(work, category) {
     if (!user?.id) {
       setError("Sign in first to save categories.");
       return;
     }
 
     if (DETAILED_CATEGORIES.includes(category)) {
-      const existingLog = workLogLookup.get(workId);
-      const existingDetails = existingLog?.details?.[category] || {};
-
-      setModalState({
-        isOpen: true,
+      openModal({
         category,
-        workId,
-        workTitle,
-        initialValues: existingDetails,
+        workId: work.id,
+        workTitle: work.title,
+        initialValues: workLogLookup.get(work.id)?.details?.[category],
       });
       return;
     }
 
+    if (pendingWorkIds.has(work.id)) {
+      return;
+    }
+
+    setWorkPending(work.id, true);
+
     try {
-      await toggleUserLogCategory({ userId: user.id, workId, category });
-      await refreshLogs();
+      const updatedLog = await toggleUserLogCategory({
+        workId: work.id,
+        category,
+      });
+      setLogs((previous) => applyLogChange(previous, work.id, updatedLog));
     } catch (actionError) {
       setError(actionError.message);
+    } finally {
+      setWorkPending(work.id, false);
     }
   }
 
   async function handleModalSave(values) {
-    if (!user?.id || !modalState.workId || !modalState.category) {
+    if (!user?.id || !modal.workId || !modal.category) {
       return;
     }
 
     setIsSaving(true);
 
     try {
-      await upsertUserLogCategory({
-        userId: user.id,
-        workId: modalState.workId,
-        category: modalState.category,
+      const updatedLog = await setUserLogCategory({
+        workId: modal.workId,
+        category: modal.category,
         details: values,
       });
-      setModalState({
-        isOpen: false,
-        category: null,
-        workId: null,
-        workTitle: "",
-        initialValues: {},
-      });
-      await refreshLogs();
+      setLogs((previous) => applyLogChange(previous, modal.workId, updatedLog));
+      closeModal();
     } catch (saveError) {
       setError(saveError.message);
     } finally {
@@ -393,32 +387,31 @@ function ComposerPage() {
   }
 
   async function handleModalRemove() {
-    if (!user?.id || !modalState.workId || !modalState.category) {
+    if (!user?.id || !modal.workId || !modal.category) {
       return;
     }
 
     setIsSaving(true);
 
     try {
-      await removeUserLogCategory({
-        userId: user.id,
-        workId: modalState.workId,
-        category: modalState.category,
+      const updatedLog = await removeUserLogCategory({
+        workId: modal.workId,
+        category: modal.category,
       });
-      setModalState({
-        isOpen: false,
-        category: null,
-        workId: null,
-        workTitle: "",
-        initialValues: {},
-      });
-      await refreshLogs();
+      setLogs((previous) => applyLogChange(previous, modal.workId, updatedLog));
+      closeModal();
     } catch (removeError) {
       setError(removeError.message);
     } finally {
       setIsSaving(false);
     }
   }
+
+  const handleModalClose = useCallback(() => {
+    if (!isSaving) {
+      closeModal();
+    }
+  }, [closeModal, isSaving]);
 
   async function handleSaveComposerNote(event) {
     event.preventDefault();
@@ -428,15 +421,10 @@ function ComposerPage() {
       return;
     }
 
-    const normalizedNote = composerNoteDraft.trim();
+    const validation = validateNote(composerNoteDraft);
 
-    if (!normalizedNote) {
-      setError("Write a note before saving.");
-      return;
-    }
-
-    if (normalizedNote.length > COMPOSER_NOTE_MAX_LENGTH) {
-      setError("Note must be 500 characters or fewer.");
+    if (validation.error) {
+      setError(validation.error);
       return;
     }
 
@@ -447,7 +435,7 @@ function ComposerPage() {
       const savedNote = await upsertComposerNote({
         userId: user.id,
         composerId: composer.id,
-        note: normalizedNote,
+        note: validation.note,
       });
 
       setComposerNote(savedNote);
@@ -517,7 +505,7 @@ function ComposerPage() {
   }
 
   const composerDisplayName = composer.complete_name || composer.name;
-  const biography = getShortBio(composer.bio);
+  const biography = (composer.bio || "").trim();
 
   return (
     <main className="page">
@@ -624,7 +612,7 @@ function ComposerPage() {
             >
               <textarea
                 className="textarea"
-                maxLength={COMPOSER_NOTE_MAX_LENGTH}
+                maxLength={NOTE_MAX_LENGTH}
                 placeholder="Write your private note for this composer"
                 value={composerNoteDraft}
                 onChange={(event) => setComposerNoteDraft(event.target.value)}
@@ -632,7 +620,7 @@ function ComposerPage() {
 
               <div className="composer-note-actions">
                 <span className="text-muted">
-                  {composerNoteDraft.trim().length}/{COMPOSER_NOTE_MAX_LENGTH}
+                  {composerNoteDraft.trim().length}/{NOTE_MAX_LENGTH}
                 </span>
 
                 <div className="composer-note-buttons">
@@ -677,12 +665,18 @@ function ComposerPage() {
                 type="search"
                 placeholder="Search works"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setPage(1);
+                }}
               />
               <select
                 className="select"
                 value={genreFilter}
-                onChange={(event) => setGenreFilter(event.target.value)}
+                onChange={(event) => {
+                  setGenreFilter(event.target.value);
+                  setPage(1);
+                }}
               >
                 <option value="all">All genres</option>
                 {availableGenres.map((genre) => (
@@ -694,7 +688,10 @@ function ComposerPage() {
               <select
                 className="select"
                 value={pageSize}
-                onChange={(event) => setPageSize(Number(event.target.value))}
+                onChange={(event) => {
+                  setPageSize(Number(event.target.value));
+                  setPage(1);
+                }}
               >
                 <option value={10}>10 / page</option>
                 <option value={20}>20 / page</option>
@@ -707,35 +704,27 @@ function ComposerPage() {
             <span className="text-muted">Actions</span>
             <button
               className={`chip ${actionFilters.length === 0 ? "active" : ""}`}
-              onClick={() => setActionFilters([])}
+              onClick={() => {
+                setActionFilters([]);
+                setPage(1);
+              }}
               type="button"
             >
               Show all
             </button>
-            {WORK_ACTION_FILTERS.map((category) => {
-              const metadata = WORK_ACTION_METADATA[category];
-
-              return (
-                <button
-                  key={category}
-                  className={`chip ${actionFilters.includes(category) ? "active" : ""}`}
-                  onClick={() => handleActionFilterToggle(category)}
-                  type="button"
-                >
-                  {metadata.filterLabel}
-                </button>
-              );
-            })}
+            {CATEGORY_ORDER.map((category) => (
+              <button
+                key={category}
+                className={`chip ${actionFilters.includes(category) ? "active" : ""}`}
+                aria-pressed={actionFilters.includes(category)}
+                onClick={() => handleActionFilterToggle(category)}
+                type="button"
+              >
+                {getCategoryLabel(category)}
+              </button>
+            ))}
           </div>
 
-          {isWorksLoading ? (
-            <div className="table-skeleton">
-              <div className="skeleton skeleton-line" />
-              <div className="skeleton skeleton-line" />
-              <div className="skeleton skeleton-line" />
-            </div>
-          ) : (
-            <>
               <ul className="work-list">
                 {pagedWorks.map((work) => (
                   <li className="work-item" key={work.id}>
@@ -752,7 +741,7 @@ function ComposerPage() {
                                 className={`active-category-pill active-${category}`}
                                 key={`${work.id}-${category}`}
                               >
-                                {CATEGORIES[category]?.label || category}
+                                {getCategoryLabel(category)}
                               </span>
                             ),
                           )}
@@ -783,9 +772,7 @@ function ComposerPage() {
                         >
                           {CATEGORY_ORDER.map((category) => {
                             const metadata = CATEGORIES[category];
-                            const actionMetadata =
-                              WORK_ACTION_METADATA[category];
-                            const Icon = actionMetadata.icon;
+                            const Icon = CATEGORY_ICONS[category];
                             const isActive = Boolean(
                               workLogLookup
                                 .get(work.id)
@@ -797,20 +784,15 @@ function ComposerPage() {
                                 key={category}
                                 className={`btn btn-small btn-${category} action-category-btn ${isActive ? "active" : ""}`}
                                 onClick={() =>
-                                  handleCategoryAction(
-                                    work.id,
-                                    work.title,
-                                    category,
-                                  )
+                                  handleCategoryAction(work, category)
                                 }
-                                title={actionMetadata.hint || undefined}
-                                aria-label={
-                                  actionMetadata.hint
-                                    ? `${metadata.label}. ${actionMetadata.hint}`
-                                    : metadata.label
-                                }
+                                title={metadata.hint}
+                                aria-label={`${metadata.label}. ${metadata.hint}`}
+                                aria-pressed={isActive}
                                 disabled={
-                                  isSaving || expandedWorkId !== work.id
+                                  isSaving ||
+                                  pendingWorkIds.has(work.id) ||
+                                  expandedWorkId !== work.id
                                 }
                                 type="button"
                               >
@@ -819,7 +801,7 @@ function ComposerPage() {
                                   height="16"
                                   width="16"
                                 />
-                                <span>{actionMetadata.actionLabel}</span>
+                                <span>{metadata.label}</span>
                               </button>
                             );
                           })}
@@ -830,59 +812,30 @@ function ComposerPage() {
                 ))}
               </ul>
 
-              <div className="pagination-row">
-                <button
-                  className="btn btn-small"
-                  disabled={currentPage <= 1}
-                  onClick={() =>
-                    setPage((previous) => Math.max(1, previous - 1))
-                  }
-                >
-                  Prev
-                </button>
-                <span className="text-muted">
-                  Page {currentPage} / {totalPages}
-                </span>
-                <button
-                  className="btn btn-small"
-                  disabled={currentPage >= totalPages}
-                  onClick={() =>
-                    setPage((previous) => Math.min(totalPages, previous + 1))
-                  }
-                >
-                  Next
-                </button>
-              </div>
-            </>
-          )}
+              <Pagination
+                currentPage={currentPage}
+                totalPages={totalPages}
+                onPageChange={setPage}
+              />
         </section>
       )}
 
-      <CategoryModal
-        isOpen={modalState.isOpen}
-        category={modalState.category}
-        workTitle={modalState.workTitle}
-        initialValues={modalState.initialValues}
-        placeOptions={placeOptions}
-        onClose={() =>
-          setModalState({
-            isOpen: false,
-            category: null,
-            workId: null,
-            workTitle: "",
-            initialValues: {},
-          })
-        }
-        onSave={handleModalSave}
-        onRemove={handleModalRemove}
-        canRemove={Boolean(
-          modalState.workId &&
-          modalState.category &&
-          workLogLookup
-            .get(modalState.workId)
-            ?.categories?.includes(modalState.category),
-        )}
-      />
+      {modal.isOpen && (
+        <CategoryModal
+          key={modal.openKey}
+          category={modal.category}
+          workTitle={modal.workTitle}
+          initialValues={modal.initialValues}
+          placeOptions={placeOptions}
+          isSaving={isSaving}
+          onClose={handleModalClose}
+          onSave={handleModalSave}
+          onRemove={handleModalRemove}
+          canRemove={Boolean(
+            workLogLookup.get(modal.workId)?.categories?.includes(modal.category),
+          )}
+        />
+      )}
     </main>
   );
 }

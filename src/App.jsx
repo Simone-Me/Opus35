@@ -1,12 +1,15 @@
+import { lazy } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import AppShell from "./components/AppShell";
-import AuthPage from "./pages/AuthPage";
-import BrowsePage from "./pages/BrowsePage";
-import ComposerPage from "./pages/ComposerPage";
-import NotFoundPage from "./pages/NotFoundPage";
-import ProfilePage from "./pages/ProfilePage";
-import StatsPage from "./pages/StatsPage";
-import ZibaldonePage from "./pages/ZibaldonePage";
+
+// Each page is its own chunk: Recharts, for example, only loads on /stats.
+const AuthPage = lazy(() => import("./pages/AuthPage"));
+const BrowsePage = lazy(() => import("./pages/BrowsePage"));
+const ComposerPage = lazy(() => import("./pages/ComposerPage"));
+const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
+const ProfilePage = lazy(() => import("./pages/ProfilePage"));
+const StatsPage = lazy(() => import("./pages/StatsPage"));
+const ZibaldonePage = lazy(() => import("./pages/ZibaldonePage"));
 
 function App() {
   return (

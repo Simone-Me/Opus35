@@ -10,113 +10,12 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { EPOCH_SERIES, getHeardYear, toEpochBucket } from "../lib/epochs";
+import { firstRelation } from "../lib/utils";
 import { getUserLogs } from "../services/logService";
 
-const EPOCH_SERIES = [
-  { key: "Medieval", color: "#6f7f95" },
-  { key: "Renaissance", color: "#5e9a8b" },
-  { key: "Baroque", color: "#b88b3e" },
-  { key: "Classical", color: "#ddb560" },
-  { key: "Early Romantic", color: "#9d6cc0" },
-  { key: "Late Romantic", color: "#c46d8c" },
-  { key: "Romantic", color: "#b45f5f" },
-  { key: "20th Century", color: "#5d7ebf" },
-  { key: "Post-War", color: "#4f98ad" },
-  { key: "21st Century", color: "#2a8f6d" },
-  { key: "Other", color: "#5a5a5a" },
-];
-
 function extractComposer(work) {
-  const composer = work?.composers;
-
-  if (Array.isArray(composer)) {
-    return composer[0] || {};
-  }
-
-  return composer || {};
-}
-
-function toEpochBucket(epoch) {
-  if (!epoch) {
-    return "Other";
-  }
-
-  const normalized = epoch
-    .toLowerCase()
-    .replace(/[\u2010-\u2015]/g, "-")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (normalized.includes("medieval")) {
-    return "Medieval";
-  }
-
-  if (normalized.includes("renaissance")) {
-    return "Renaissance";
-  }
-
-  if (normalized.includes("baroque")) {
-    return "Baroque";
-  }
-
-  if (normalized.includes("classical")) {
-    return "Classical";
-  }
-
-  if (normalized.includes("early romantic")) {
-    return "Early Romantic";
-  }
-
-  if (normalized.includes("late romantic")) {
-    return "Late Romantic";
-  }
-
-  if (normalized === "romantic" || normalized.includes(" romantic")) {
-    return "Romantic";
-  }
-
-  if (normalized.includes("post-war") || normalized.includes("post war")) {
-    return "Post-War";
-  }
-
-  if (
-    normalized.includes("20th century") ||
-    normalized.includes("20th") ||
-    normalized.includes("twentieth")
-  ) {
-    return "20th Century";
-  }
-
-  if (
-    normalized.includes("21st century") ||
-    normalized.includes("21st") ||
-    normalized.includes("twenty-first") ||
-    normalized.includes("contemporary")
-  ) {
-    return "21st Century";
-  }
-
-  if (normalized.includes("modern")) {
-    return "20th Century";
-  }
-
-  return "Other";
-}
-
-function getHeardYear(log) {
-  const dateFromDetails = log.details?.heard?.date;
-  const baseDate = dateFromDetails || log.created_at;
-
-  if (!baseDate) {
-    return "Unknown";
-  }
-
-  const parsedDate = new Date(baseDate);
-  if (Number.isNaN(parsedDate.getTime())) {
-    return "Unknown";
-  }
-
-  return String(parsedDate.getFullYear());
+  return firstRelation(work?.composers) || {};
 }
 
 function ChartTooltip({ active, payload, label, hideZeroValues = false }) {
@@ -193,6 +92,8 @@ function StatsPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    let ignore = false;
+
     async function loadLogs() {
       if (!user?.id) {
         setLogs([]);
@@ -201,13 +102,22 @@ function StatsPage() {
 
       try {
         const data = await getUserLogs(user.id);
-        setLogs(data);
+
+        if (!ignore) {
+          setLogs(data);
+        }
       } catch (loadError) {
-        setError(loadError.message);
+        if (!ignore) {
+          setError(loadError.message);
+        }
       }
     }
 
     loadLogs();
+
+    return () => {
+      ignore = true;
+    };
   }, [user?.id]);
 
   const heardLogs = useMemo(
@@ -224,8 +134,8 @@ function StatsPage() {
     });
 
     return [...composerCounter.entries()]
-      .map(([name, listens]) => ({ name, listens }))
-      .sort((left, right) => right.listens - left.listens)
+      .map(([name, works]) => ({ name, works }))
+      .sort((left, right) => right.works - left.works)
       .slice(0, 10);
   }, [heardLogs]);
 
@@ -281,7 +191,7 @@ function StatsPage() {
         <div>
           <h1>Discover</h1>
           <p className="text-muted">
-            Most listened composers and favorite periods.
+            Composers and periods of the works you attended.
           </p>
         </div>
       </div>
@@ -290,12 +200,12 @@ function StatsPage() {
 
       {heardLogs.length === 0 ? (
         <p className="text-muted">
-          No heard logs yet. Mark pieces as heard to populate charts.
+          No attended works yet. Mark pieces as attended to populate charts.
         </p>
       ) : (
         <section className="chart-grid">
           <article className="chart-card">
-            <h2 className="chart-title">Most listened composers</h2>
+            <h2 className="chart-title">Composers with most attended works</h2>
             <div style={{ width: "100%", height: 280 }}>
               <ResponsiveContainer>
                 <BarChart data={topComposerData}>
@@ -315,14 +225,14 @@ function StatsPage() {
                     wrapperStyle={{ zIndex: 30 }}
                     cursor={{ fill: "rgba(221, 181, 96, 0.12)" }}
                   />
-                  <Bar dataKey="listens" fill="#2a8f6d" />
+                  <Bar dataKey="works" name="Attended works" fill="#2a8f6d" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </article>
 
           <article className="chart-card">
-            <h2 className="chart-title">Epoch breakdown by year</h2>
+            <h2 className="chart-title">Attended works by year and epoch</h2>
             <div style={{ width: "100%", height: 280 }}>
               <ResponsiveContainer>
                 <BarChart data={epochData}>

@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import IconStreamlineUltimateArrowButtonRight1 from "~icons/streamline-ultimate/arrow-button-right-1";
 import IconStreamlineUltimateMultipleUsers1 from "~icons/streamline-ultimate/multiple-users-1";
-
-const DEFAULT_PLACE_OPTIONS = ["Philharmonie de Paris", "Opera de Paris"];
+import { DEFAULT_PLACE_OPTIONS } from "../lib/categories";
 const VOCAL_ROLE_OPTIONS = [
   "Choir",
   "Solo",
@@ -16,22 +15,15 @@ const VOCAL_ROLE_OPTIONS = [
   "Other",
 ];
 
-const FORM_FIELDS = {
-  heard: [
-    { name: "date", label: "Date", type: "date" },
-    { name: "place", label: "Place", type: "place" },
-    { name: "orchestra", label: "Orchestra", type: "text" },
-    { name: "conductor", label: "Director orchestra", type: "text" },
-  ],
-  bought: [
-    { name: "dateBought", label: "Date acquired", type: "date" },
-    { name: "recordingDate", label: "Recording date", type: "date" },
-    { name: "place", label: "Place", type: "place" },
-    { name: "conductor", label: "Director", type: "text" },
-    { name: "orchestra", label: "Orchestra", type: "text" },
-    { name: "comment", label: "Record / comment", type: "textarea" },
-  ],
-};
+// Generic field list for the "Record" form; the "Attended" form has a custom layout.
+const RECORD_FIELDS = [
+  { name: "dateBought", label: "Date acquired", type: "date" },
+  { name: "recordingDate", label: "Recording date", type: "date" },
+  { name: "place", label: "Place", type: "place" },
+  { name: "conductor", label: "Director", type: "text" },
+  { name: "orchestra", label: "Orchestra", type: "text" },
+  { name: "comment", label: "Record / comment", type: "textarea" },
+];
 
 function createVocalLine(line = {}) {
   return {
@@ -58,8 +50,9 @@ function serializeVocals(vocalsValue) {
   }));
 }
 
+// Mount it only while open, with a `key` that changes on every open
+// (see useCategoryModal): the form state is initialised from props once.
 function CategoryModal({
-  isOpen,
   category,
   workTitle,
   initialValues,
@@ -67,13 +60,24 @@ function CategoryModal({
   onSave,
   onRemove,
   canRemove = false,
+  isSaving = false,
   placeOptions = [],
 }) {
-  const [values, setValues] = useState(initialValues || {});
-  const [isChoirOpen, setIsChoirOpen] = useState(false);
-  const [isStageDirectorOpen, setIsStageDirectorOpen] = useState(false);
-  const [isCommentOpen, setIsCommentOpen] = useState(false);
-  const fields = useMemo(() => FORM_FIELDS[category] || [], [category]);
+  const [values, setValues] = useState(() => ({
+    ...(initialValues || {}),
+    vocals: normalizeVocals(initialValues?.vocals),
+  }));
+  const [isChoirOpen, setIsChoirOpen] = useState(
+    () => category === "heard" && values.vocals.length > 0,
+  );
+  const [isStageDirectorOpen, setIsStageDirectorOpen] = useState(() =>
+    Boolean(values.stageDirector),
+  );
+  const [isCommentOpen, setIsCommentOpen] = useState(() =>
+    Boolean(values.comment),
+  );
+  const titleId = useId();
+  const dialogRef = useRef(null);
   const mergedPlaceOptions = useMemo(
     () =>
       Array.from(new Set([...DEFAULT_PLACE_OPTIONS, ...placeOptions])).sort(
@@ -83,18 +87,24 @@ function CategoryModal({
   );
 
   useEffect(() => {
-    const normalized = {
-      ...(initialValues || {}),
-      vocals: normalizeVocals(initialValues?.vocals),
+    const previouslyFocused = document.activeElement;
+    dialogRef.current?.querySelector("input, select, textarea, button")?.focus();
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      previouslyFocused?.focus?.();
     };
+  }, [onClose]);
 
-    setValues(normalized);
-    setIsChoirOpen(category === "heard" && normalized.vocals.length > 0);
-    setIsStageDirectorOpen(Boolean(normalized.stageDirector));
-    setIsCommentOpen(Boolean(normalized.comment));
-  }, [initialValues]);
-
-  if (!isOpen || fields.length === 0) {
+  if (category !== "heard" && category !== "bought") {
     return null;
   }
 
@@ -150,9 +160,16 @@ function CategoryModal({
   }
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true">
-      <div className="modal-card">
-        <h2>{category === "heard" ? "Heard details" : "Record details"}</h2>
+    <div
+      className="modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+    >
+      <div className="modal-card" ref={dialogRef}>
+        <h2 id={titleId}>
+          {category === "heard" ? "Attended details" : "Record details"}
+        </h2>
         <p className="text-muted">{workTitle}</p>
 
         <form onSubmit={handleSubmit}>
@@ -345,7 +362,7 @@ function CategoryModal({
             </div>
           ) : (
             <div className="form-grid">
-              {fields.map((field) => (
+              {RECORD_FIELDS.map((field) => (
                 <label className="form-field" key={field.name}>
                   <span>{field.label}</span>
                   {field.type === "textarea" ? (
@@ -389,16 +406,21 @@ function CategoryModal({
           )}
 
           <div className="modal-actions">
-            {canRemove && (
-              <button type="button" className="btn" onClick={onRemove}>
+            {canRemove && onRemove && (
+              <button
+                type="button"
+                className="btn"
+                onClick={onRemove}
+                disabled={isSaving}
+              >
                 Remove category
               </button>
             )}
             <button type="button" className="btn" onClick={onClose}>
               Cancel
             </button>
-            <button type="submit" className="btn">
-              Save
+            <button type="submit" className="btn" disabled={isSaving}>
+              {isSaving ? "Saving..." : "Save"}
             </button>
           </div>
         </form>

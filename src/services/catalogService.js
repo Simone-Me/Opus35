@@ -1,14 +1,16 @@
 import { hasSupabaseCredentials, supabase } from "../lib/supabaseClient";
+import { toOrIlikePattern } from "../lib/utils";
 
-const WORKS_INDEX_BATCH_SIZE = 1000;
+const COMPOSER_DETAIL_COLUMNS =
+  "id,name,complete_name,epoch,birth,death,bio,portrait_url,wikipedia_url";
 
-function normalizeComposerLink(composerValue) {
-  if (Array.isArray(composerValue)) {
-    return composerValue[0] || null;
-  }
-
-  return composerValue || null;
-}
+// Server-side sort keys for the works_index view.
+export const WORK_SORT_COLUMNS = {
+  title: "title",
+  composer: "composer_name",
+  epoch: "composer_epoch",
+  genre: "genre",
+};
 
 export async function getComposerCatalog() {
   if (!hasSupabaseCredentials) {
@@ -17,7 +19,7 @@ export async function getComposerCatalog() {
 
   const { data, error } = await supabase
     .from("composers")
-    .select("id,name,complete_name,epoch,bio,portrait_url,wikipedia_url")
+    .select("id,name,complete_name,epoch")
     .order("name", { ascending: true });
 
   if (error) {
@@ -34,9 +36,7 @@ export async function getComposerById(composerId) {
 
   const { data, error } = await supabase
     .from("composers")
-    .select(
-      "id,name,complete_name,epoch,birth,death,bio,portrait_url,wikipedia_url",
-    )
+    .select(COMPOSER_DETAIL_COLUMNS)
     .eq("id", composerId)
     .maybeSingle();
 
@@ -47,6 +47,7 @@ export async function getComposerById(composerId) {
   return data;
 }
 
+// Returns the composer as stored after the enrichment attempt.
 export async function enrichComposerFromWikipedia(composerId) {
   if (!hasSupabaseCredentials) {
     return null;
@@ -63,7 +64,7 @@ export async function enrichComposerFromWikipedia(composerId) {
     throw error;
   }
 
-  return data;
+  return data?.composer || null;
 }
 
 export async function getWorksByComposerId(composerId) {
@@ -73,9 +74,7 @@ export async function getWorksByComposerId(composerId) {
 
   const { data, error } = await supabase
     .from("works")
-    .select(
-      "id,title,genre,publication_year,popularity,openopus_id,composer_id",
-    )
+    .select("id,title,genre,publication_year")
     .eq("composer_id", composerId)
     .order("title", { ascending: true });
 
@@ -86,44 +85,77 @@ export async function getWorksByComposerId(composerId) {
   return data || [];
 }
 
-export async function getWorksIndex() {
+// One page of the flat works index, filtered and sorted by the database.
+export async function getWorksPage({
+  query = "",
+  epoch = "all",
+  genre = "all",
+  sortBy = "title",
+  sortDirection = "asc",
+  page = 1,
+  pageSize = 10,
+} = {}) {
   if (!hasSupabaseCredentials) {
-    return [];
+    return { rows: [], count: 0 };
   }
 
-  const rows = [];
-  let offset = 0;
+  const sortColumn = WORK_SORT_COLUMNS[sortBy] || WORK_SORT_COLUMNS.title;
+  const from = (page - 1) * pageSize;
 
-  while (true) {
-    const { data, error } = await supabase
-      .from("works")
-      .select(
-        "id,title,genre,publication_year,popularity,openopus_id,composers(id,name,complete_name,epoch)",
-      )
-      .order("title", { ascending: true })
-      .range(offset, offset + WORKS_INDEX_BATCH_SIZE - 1);
+  let request = supabase
+    .from("works_index")
+    .select(
+      "id,title,genre,publication_year,composer_id,composer_name,composer_complete_name,composer_epoch",
+      { count: "exact" },
+    );
 
-    if (error) {
-      throw error;
-    }
+  const trimmedQuery = query.trim();
 
-    const chunk = data || [];
-
-    if (chunk.length === 0) {
-      break;
-    }
-
-    rows.push(...chunk);
-
-    if (chunk.length < WORKS_INDEX_BATCH_SIZE) {
-      break;
-    }
-
-    offset += WORKS_INDEX_BATCH_SIZE;
+  if (trimmedQuery) {
+    const pattern = toOrIlikePattern(trimmedQuery);
+    request = request.or(`title.ilike.${pattern},composer_name.ilike.${pattern}`);
   }
 
-  return rows.map((work) => ({
-    ...work,
-    composer: normalizeComposerLink(work.composers),
-  }));
+  if (epoch !== "all") {
+    request = request.eq("composer_epoch", epoch);
+  }
+
+  if (genre !== "all") {
+    request = request.eq("genre", genre);
+  }
+
+  const { data, error, count } = await request
+    .order(sortColumn, { ascending: sortDirection === "asc", nullsFirst: false })
+    .order("id", { ascending: true })
+    .range(from, from + pageSize - 1);
+
+  if (error) {
+    throw error;
+  }
+
+  return { rows: data || [], count: count || 0 };
+}
+
+export async function getWorkFilterOptions() {
+  if (!hasSupabaseCredentials) {
+    return { epochs: [], genres: [] };
+  }
+
+  const [epochsResult, genresResult] = await Promise.all([
+    supabase.from("composer_epochs").select("epoch").order("epoch"),
+    supabase.from("work_genres").select("genre").order("genre"),
+  ]);
+
+  if (epochsResult.error) {
+    throw epochsResult.error;
+  }
+
+  if (genresResult.error) {
+    throw genresResult.error;
+  }
+
+  return {
+    epochs: (epochsResult.data || []).map((row) => row.epoch),
+    genres: (genresResult.data || []).map((row) => row.genre),
+  };
 }

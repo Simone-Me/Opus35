@@ -8,6 +8,10 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:db": "bash scripts/test-db.sh",
+    "test:functions": "deno test supabase/functions/wikipedia-enrichment",
     "seed:openopus": "node scripts/seed-openopus.mjs",
     "dates:propose": "node scripts/propose-wikipedia-work-dates.mjs",
     "bios:enrich": "node scripts/enrich-composer-bios.mjs",
@@ -18,7 +22,7 @@
     "date-fns": "^4.1.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "react-router-dom": "^7.14.0",
+    "react-router-dom": "^7.18.4",
     "recharts": "^3.8.1"
   },
   "devDependencies": {
@@ -26,6 +30,9 @@
     "@iconify-json/streamline-ultimate": "^1.2.2",
     "@svgr/core": "^8.1.0",
     "@svgr/plugin-jsx": "^8.1.0",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
@@ -33,8 +40,9 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
-    "unplugin-auto-import": "^21.0.0",
+    "jsdom": "^29.1.1",
     "unplugin-icons": "^23.0.1",
-    "vite": "^8.0.4"
+    "vite": "^8.3.2",
+    "vitest": "^5.0.3"
   }
 }

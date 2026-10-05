@@ -58,7 +58,8 @@ Main menu labels in UI:
 
 #### Composer
 
-- Loads composer details and all works for the selected composer
+- Loads composer details, all works for the selected composer, and only the signed-in user's logs for those works
+- Navigating to another composer resets filters, tabs and pending requests (the view is keyed by composer id)
 - Uses `complete_name` as the main heading when available
 - Work list supports search, genre filter, and pagination
 - Work list includes a multi-select action filter (`Show all`, `Attended`, `Favorite`, `Record`, `Alert`)
@@ -67,17 +68,19 @@ Main menu labels in UI:
   - icon click opens/closes the action controls with a smooth slide animation
   - action controls include text + icon and use hover help text
   - selected categories remain visible as chips even when controls are collapsed
+  - flag toggles are atomic database calls; the work's buttons are disabled while a toggle is in flight, and the UI is updated from the returned row (no full reload)
 - Available categories:
   - `heard` (labeled `Attended`, with details modal)
   - `favorite` (flag)
   - `record` (stored as `bought` category key, with details modal)
   - `alert` (flag)
 - Includes a `Notes` tab for private per-composer notes (owner-only, max 500 chars)
-- Heard details include extended vocal data entry:
+- Attended details include extended vocal data entry:
   - choir/solo mini-grid with multiple lines
   - vocal role selector (`Choir`, `Solo`, `Tenor`, etc.)
   - vocalist/group name input (max 140 chars)
-- Heard/Record place supports selectable defaults and custom typed entries
+- Attended/Record place supports selectable defaults and custom typed entries (suggestions come from all places the user already typed)
+- The details modal closes with `Escape`, is labelled for screen readers, and always reopens with the saved values (unsaved edits are discarded on cancel)
 - If biography is missing, lazily invokes Edge Function to fetch Wikipedia summary
 - Biography preview is intentionally short for readability
 - Composer header includes a quick `here` link that jumps to footer contact for missing-artist suggestions
@@ -85,10 +88,10 @@ Main menu labels in UI:
 
 #### Zibaldone
 
-- Loads all works with linked composer metadata
-- Uses batched Supabase reads so catalogs larger than 1000 rows are fully loaded
-- Includes one daily random recommendation per signed-in user
-- Reuses the same recommendation until end of day (23:59)
+- Reads one page at a time from the `works_index` view: search, filters, sort and pagination run in the database (no full catalog download)
+- Search is debounced (300 ms) and user input is escaped before reaching the PostgREST filter
+- Includes one daily random recommendation per signed-in user, picked by the `generate_daily_recommendation` RPC
+- Reuses the same recommendation until local midnight (the day is the visitor's local calendar day)
 - Avoids repeating works already recommended during the previous 365 days
 - Search by work title or composer name
 - Filters by epoch and genre
@@ -98,7 +101,8 @@ Main menu labels in UI:
 #### Profile
 
 - Shows user logs expanded by category
-- Tabs: `All`, `Heard`, `Favorites`, `Records`, `Alerts`, `Notes`
+- Tabs: `All`, `Attended`, `Favorites`, `Records`, `Alerts`, `Notes`
+- Category column and details preview use readable labels (e.g. `Attended`, `Opera de Paris · Accentus`)
 - For detailed categories (`heard`, `bought`), supports editing category-specific fields
 - Supports category deletion per work
 - Includes personal notes in dedicated `Notes` tab:
@@ -108,18 +112,20 @@ Main menu labels in UI:
 
 #### Stats
 
-- Uses only logs tagged as `heard`
-- Chart 1: top composers by listen count
+- Uses only logs tagged as `heard` (labelled `Attended`)
+- Chart 1: composers with most attended works (one log per work, so a work attended twice counts once)
 - Top-composer chart uses angled x-axis labels so long names stay readable
 - Tooltip styling uses dark theme colors for readability
-- Chart 2: heard logs by year with full epoch buckets (`Medieval`, `Renaissance`, `Baroque`, `Classical`, `Early Romantic`, `Late Romantic`, `Romantic`, `20th Century`, `Post-War`, `21st Century`, `Other`)
+- Chart 2: attended works by year with full epoch buckets (`Medieval`, `Renaissance`, `Baroque`, `Classical`, `Early Romantic`, `Late Romantic`, `Romantic`, `20th Century`, `Post-War`, `21st Century`, `Other`)
 - Epoch-by-year chart includes visible legend and distinct color per epoch bucket
 - Epoch tooltip shows only present values (non-zero buckets), with opaque styling for readability
+- The Discover page and Recharts are loaded on demand (separate chunk)
 
 #### Favicons
 
 - Website favicon assets are served from `public/` (`favicon.ico`, PNG sizes, Apple touch icon)
-- `index.html` includes favicon and `site.webmanifest` links
+- `index.html` includes favicon and `site.webmanifest` links, a meta description and theme color
+- Google Fonts are loaded from `index.html` with `preconnect` (not a CSS `@import`)
 
 #### Auth
 
@@ -128,7 +134,12 @@ Main menu labels in UI:
   - minimum 12 chars
   - at least 1 special character
   - confirm password must match
-- Password reset email
+- Password policy is checked in the client; set the same rules in Supabase (Authentication → Policies/Providers → Email: minimum length 12 and required characters) so it cannot be bypassed through the API
+- Password reset:
+  - `Reset password` sends an email whose link returns to `/auth?mode=recovery`
+  - the app listens for the `PASSWORD_RECOVERY` auth event and shows a `New password` form (`supabase.auth.updateUser`)
+  - add `https://<your-domain>/auth?mode=recovery` (and `http://localhost:5173/auth?mode=recovery` for development) to Supabase → Authentication → URL Configuration → Redirect URLs
+- Buttons are disabled while an auth request is in flight (no double submit)
 - Sign out
 
 #### Runtime safety
@@ -160,9 +171,9 @@ Script: `scripts/seed-openopus.mjs`
 
 Service: `src/services/catalogService.js`
 
-- `getComposerCatalog()` for Browse
+- `getComposerCatalog()` for Browse (only `id,name,complete_name,epoch`)
 - `getComposerById()` and `getWorksByComposerId()` for Composer page
-- `getWorksIndex()` for Zibaldone
+- `getWorksPage()` and `getWorkFilterOptions()` for Zibaldone (views `works_index`, `composer_epochs`, `work_genres`)
 
 ### 3) User-generated data
 
@@ -171,22 +182,31 @@ Service: `src/services/logService.js`
 - One row per `(user_id, work_id)` in `user_logs`
 - Multiple categories stored in `categories text[]`
 - Per-category metadata stored in `details jsonb` under keys like `details.heard` and `details.bought`
-- Toggling/removing categories updates arrays/details and deletes row when no categories remain
+- All writes go through SQL functions (RPC) that run as the caller (`security invoker`, RLS applies) and use `auth.uid()`:
+  - `set_user_log_category(p_work_id, p_category, p_details)`: adds a category; non-empty details replace `details[category]`
+  - `remove_user_log_category(p_work_id, p_category)`: removes category + details, deletes the row when no category remains
+  - `toggle_user_log_category(p_work_id, p_category)`: flips a flag under a row lock
+- Each RPC is a single transaction, so double clicks or two open tabs cannot lose categories (the previous read-modify-write in the browser could)
+- RPCs return the resulting row (or nothing when deleted); pages apply it locally instead of reloading every log
+- `details` must be a JSON object of at most 16 KB (`user_logs_details_shape` check)
 
 ### 4) Personal notes
 
 Service: `src/services/noteService.js`
 
 - Per-user profile notes are stored in `profile_notes`
-- Max note length is 500 characters (validated in client and DB)
+- Max note length is 500 characters (validated in client via `src/lib/notes.js` and in DB)
 - Notes are listed in profile, ordered by `updated_at` descending
 
 ### 5) Lazy enrichment (biography)
 
 Supabase Edge Function: `supabase/functions/wikipedia-enrichment/index.ts`
 
-- Triggered by Composer page when `composer.bio` is empty
+- Triggered by Composer page when `composer.bio` is empty (once per page view); the response already contains the updated composer
 - Looks up composer in DB
+- Throttled per composer: `composers.enrichment_attempted_at` is claimed atomically, so Wikipedia is queried at most once per composer every 7 days, whoever calls the function
+- Never overwrites an existing bio, except with `force: true` plus the `x-enrichment-admin-secret` header matching `ENRICHMENT_ADMIN_SECRET`
+- Only browsers on `ALLOWED_ORIGINS` get CORS access; errors are logged server-side and returned as a generic message
 - Queries Wikipedia summary endpoint using normalized `First_Last` and full-name title candidates
 - Falls back to MediaWiki search API when direct summary-title resolution fails
 - Updates composer row with:
@@ -256,6 +276,7 @@ Schema: `supabase/schema.sql`
 
 - Source of truth for composer metadata
 - Key fields: `openopus_id`, `name`, `complete_name`, `epoch`, `birth`, `death`, `bio`, `wikipedia_url`, `portrait_url`
+- `enrichment_attempted_at`: last Wikipedia lookup (throttle for the Edge Function)
 
 ### `public.works`
 
@@ -299,7 +320,12 @@ Schema: `supabase/schema.sql`
 
 - GIN index for full-text title search on `works` (`to_tsvector('simple', title)`)
 - GIN index on `user_logs.categories`
-- Additional btree indexes for common joins/filters
+- Additional btree indexes for common joins/filters and Zibaldone sorting (`works.title`, `works.genre`, `composers.name`, `composers.epoch`)
+
+### Read views and RPCs
+
+- `works_index` (works + composer name/epoch), `composer_epochs`, `work_genres`: `security_invoker` views, so the catalog RLS still applies
+- `set_user_log_category`, `remove_user_log_category`, `toggle_user_log_category`, `generate_daily_recommendation`: executable by `authenticated` only (revoked from `anon`)
 
 ## Missing data and failure behavior
 
@@ -325,7 +351,7 @@ UI fallbacks:
 ### Missing biography
 
 - Composer page displays: `No biography yet. Visit again to trigger lazy enrichment.`
-- Enrichment is attempted once per page load when `bio` is empty
+- Enrichment is attempted once per page view when `bio` is empty; the function itself retries a composer at most once every 7 days
 - If function cannot enrich (for example no Wikipedia summary), composer remains unchanged and UI keeps fallback text
 - Successful enrichment stores and shows a short biography preview
 
@@ -344,12 +370,19 @@ Example visible message:
 
 ## Security model (RLS)
 
-Defined in `supabase/schema.sql`, validated by `supabase/rls_test.sql`.
+Defined in `supabase/schema.sql`, validated automatically by `supabase/tests/rls_test.sql` (see Tests).
 
 - Public read access: `composers`, `works`
 - Owner-only access: `profiles`, `user_logs`, `profile_notes` (select/insert/update/delete)
 - Owner-only access: `composer_notes`, `daily_recommendations` (select/insert/update/delete as needed)
 - Insert/update checks enforce `auth.uid()` ownership
+- Nobody but the service role can write `composers`/`works`
+
+### HTTP security headers (Netlify)
+
+`netlify.toml` sets on every page: a Content-Security-Policy (scripts from the site only; API calls only to `*.supabase.co`; fonts from Google Fonts; images from any https source for Wikimedia/OpenOpus portraits), `X-Frame-Options: DENY`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy` and HSTS. Hashed files under `/assets/*` are cached for one year (`immutable`).
+
+If you add a new external origin (analytics, another API, a custom Supabase domain), extend the CSP accordingly.
 
 ## Setup and run
 
@@ -377,11 +410,14 @@ Required values for seed and Edge Function deployment/runtime:
 
 Run `supabase/schema.sql` in Supabase SQL editor.
 
-If upgrading from an earlier phase, run:
+`schema.sql` is idempotent (safe to run again) and always matches the result of all migrations.
+
+If upgrading an existing project, run the migrations you have not applied yet, in order:
 
 - `supabase/migrations/20260407_phase3_phase4.sql`
 - `supabase/migrations/20260409_profile_notes.sql`
 - `supabase/migrations/202604100001_composer_notes_daily_recommendations.sql`
+- `supabase/migrations/202610050001_hardening_rpc_views.sql` (RPCs, views, details guard, enrichment throttle; required by the current frontend)
 
 ### 4) Seed catalog
 
@@ -391,11 +427,16 @@ npm run seed
 
 ### 5) Deploy enrichment function
 
+Set the function secrets, then deploy:
+
 ```bash
-supabase functions deploy wikipedia-enrichment --no-verify-jwt
+supabase secrets set ALLOWED_ORIGINS="https://<your-domain>,http://localhost:5173"
+# optional, only needed to force re-enrichment of an existing bio
+supabase secrets set ENRICHMENT_ADMIN_SECRET="<long random string>"
+supabase functions deploy wikipedia-enrichment
 ```
 
-If you deploy without `--no-verify-jwt`, ensure invocation/auth policy matches your frontend user flow.
+JWT verification stays on by default: requests need the project's anon key (legacy `eyJ...` JWT) or a user token, which `supabase.functions.invoke` sends automatically. If the project uses the new non-JWT publishable keys (`sb_publishable_...`), deploy with `--no-verify-jwt`: the per-composer throttle, the origin allow-list and the admin-only `force` keep the function safe to expose.
 
 ### 6) Start frontend
 
@@ -429,7 +470,7 @@ Set Netlify env vars:
 Two scheduled workflows keep the Supabase Free-tier project alive and back up its data, since Supabase Free pauses projects after a week of inactivity and does not retain any backups itself.
 
 - `.github/workflows/keepalive.yml`: pings the project's REST endpoint every night at 02:00 UTC (also runnable manually via `workflow_dispatch`).
-- `.github/workflows/backup.yml`: dumps the full database every Sunday at 03:11 UTC and uploads it as a workflow artifact (30-day retention, also runnable manually via `workflow_dispatch`).
+- `.github/workflows/backup.yml`: dumps the full database every Sunday at 03:11 UTC, checks it (size + gzip integrity) **before** uploading, encrypts it with GPG (AES256) when `BACKUP_PASSPHRASE` is set, and uploads it as a workflow artifact (30-day retention, also runnable manually via `workflow_dispatch`). The dump includes the `auth` schema (emails and password hashes), hence the encryption. Restore with `gpg --decrypt <file>.sql.gz.gpg | gunzip | psql "<connection string>"`.
 
 Required GitHub repo configuration (Settings → Secrets and variables → Actions):
 
@@ -446,20 +487,45 @@ Secrets tab:
   postgresql://postgres.<project-ref>:<PASSWORD>@aws-0-<region>.pooler.supabase.com:5432/postgres
   ```
 
+- `BACKUP_PASSPHRASE`: passphrase used to encrypt the backup (keep a copy outside GitHub, otherwise the backups cannot be decrypted). Without it the workflow still runs but uploads the dump unencrypted and shows a warning.
+
+## Tests and CI
+
+`.github/workflows/ci.yml` runs on every push to `main` and on every pull request:
+
+| Job | Command | What it checks |
+| --- | --- | --- |
+| Lint, test and build | `npm run lint`, `npm test`, `npm run build`, `npm audit --omit=dev --audit-level=high` | ESLint, Vitest unit/component tests (`src/**/*.test.js(x)`), production build, vulnerable dependencies |
+| Schema, RLS and RPC tests | `bash scripts/test-db.sh` | On a disposable Postgres with a Supabase stub (`supabase/tests/supabase_stub.sql`): `schema.sql` twice (idempotency), all migrations replayed, the production upgrade path, a diff proving `schema.sql` equals the migrated schema, and `supabase/tests/rls_test.sql` (RLS isolation between users, anon restrictions, RPC behaviour, recommendation rules) |
+| Edge Function tests | `deno fmt --check`, `deno lint`, `deno check`, `deno test` | `supabase/functions/wikipedia-enrichment/handler.test.ts` (throttle, admin-only force, CORS, input validation, no error leaks) |
+
+Run locally:
+
+```bash
+npm test                    # frontend
+npm run test:functions      # needs Deno
+PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres npm run test:db   # needs a throwaway Postgres
+```
+
+Never point `test:db` at the real Supabase project: it creates and drops a test database and inserts fixture users.
+
 ## Key folders
 
 ```text
 src/
-	components/      UI shell, modal, error boundary
-	lib/             shared constants + Supabase client
-	pages/           route pages
+	components/      UI shell, modal, pagination, error boundary
+	hooks/           shared React hooks (category modal state, debounce)
+	lib/             shared constants/helpers (categories, notes, password, epochs) + Supabase client
+	pages/           route pages (lazy-loaded)
 	services/        data access and mutation logic
+	test/            test setup and helpers
 supabase/
-	schema.sql       full schema + RLS + triggers
+	schema.sql       full schema + RLS + triggers + RPCs + views (idempotent)
 	migrations/      incremental schema changes
-	rls_test.sql     RLS verification checklist
+	tests/           Supabase stub + RLS/RPC test-suite
 	functions/
-		wikipedia-enrichment/
+		wikipedia-enrichment/   index.ts (entry), handler.ts, wikipedia.ts, handler.test.ts
 scripts/
 	seed-openopus.mjs
+	test-db.sh       SQL test runner (local/CI)
 ```

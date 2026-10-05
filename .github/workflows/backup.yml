@@ -3,11 +3,19 @@ name: Weekly backup
 # Supabase Free non conserva alcun backup — questa è l'unica copia
 # dei dati che esiste fuori dal progetto live. Gli artifact ruotano
 # automaticamente dopo retention-days.
+#
+# Il dump contiene anche lo schema auth (email e hash delle password):
+# con il secret BACKUP_PASSPHRASE viene cifrato (GPG, AES256) prima
+# dell'upload. Per ripristinare:
+#   gpg --decrypt opus35-....sql.gz.gpg | gunzip | psql "<connection string>"
 
 on:
   schedule:
     - cron: '11 3 * * 0'   # ogni domenica alle 03:11 UTC
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   backup:
@@ -21,11 +29,38 @@ jobs:
           sudo apt-get install -y postgresql-client-17
 
       - name: Dump database
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
           filename="opus35-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
-          /usr/lib/postgresql/17/bin/pg_dump "${{ secrets.SUPABASE_DB_URL }}" --no-owner --no-privileges | gzip > "$filename"
+          /usr/lib/postgresql/17/bin/pg_dump "$SUPABASE_DB_URL" --no-owner --no-privileges | gzip > "$filename"
           echo "BACKUP_FILE=$filename" >> "$GITHUB_ENV"
+
+      # Verify before uploading, so a broken dump never replaces a good one.
+      - name: Verify the dump is non-empty
+        run: |
+          size=$(stat -c%s "$BACKUP_FILE")
+          echo "backup size: $size bytes"
+          if [ "$size" -lt 1024 ]; then
+            echo "backup suspiciously small — treating as a failure"
+            exit 1
+          fi
+          gzip -t "$BACKUP_FILE"
+
+      - name: Encrypt the dump
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BACKUP_PASSPHRASE}" ]; then
+            echo "::warning::BACKUP_PASSPHRASE is not set: the backup is uploaded unencrypted. Add it in Settings → Secrets and variables → Actions."
+            exit 0
+          fi
+          gpg --batch --yes --pinentry-mode loopback --symmetric --cipher-algo AES256 \
+            --passphrase-fd 0 --output "${BACKUP_FILE}.gpg" "$BACKUP_FILE" <<< "$BACKUP_PASSPHRASE"
+          rm "$BACKUP_FILE"
+          echo "BACKUP_FILE=${BACKUP_FILE}.gpg" >> "$GITHUB_ENV"
 
       - name: Upload backup artifact
         uses: actions/upload-artifact@v4
@@ -33,12 +68,4 @@ jobs:
           name: ${{ env.BACKUP_FILE }}
           path: ${{ env.BACKUP_FILE }}
           retention-days: 30
-
-      - name: Verify the dump is non-empty
-        run: |
-          size=$(stat -c%s "${{ env.BACKUP_FILE }}")
-          echo "backup size: $size bytes"
-          if [ "$size" -lt 1024 ]; then
-            echo "backup suspiciously small — treating as a failure"
-            exit 1
-          fi
+          if-no-files-found: error
