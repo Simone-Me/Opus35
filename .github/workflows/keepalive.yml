@@ -2,25 +2,25 @@ name: Keep Supabase project awake
 
 on:
   schedule:
-    - cron: '0 2 * * *'   # ogni notte alle 2:00 UTC
+    - cron: '0 2 */3 * *'   # ogni 3 giorni alle 2:00 UTC
   workflow_dispatch:
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping a trivial public REST endpoint
+      - name: Run a real query against the database
         run: |
           set -euo pipefail
-          status=$(curl -s -o /dev/null -w "%{http_code}" \
+          # Query reale su una tabella (non la root di PostgREST), così
+          # Supabase conta l'attività sul database e non mette in pausa il progetto.
+          status=$(curl -s -o response.json -w "%{http_code}" \
             -H "apikey: ${{ vars.VITE_SUPABASE_ANON_KEY }}" \
-            "${{ vars.VITE_SUPABASE_URL }}/rest/v1/")
+            -H "Authorization: Bearer ${{ vars.VITE_SUPABASE_ANON_KEY }}" \
+            "${{ vars.VITE_SUPABASE_URL }}/rest/v1/works?select=id&limit=1")
           echo "status=$status"
-          # PostgREST risponde 200 (o a volte 401 senza bearer token,
-          # a seconda della config) su una richiesta root nuda —
-          # in entrambi i casi il progetto ha risposto, che è tutto
-          # ciò che serve a questo job.
-          if [ "$status" -ge 500 ]; then
-            echo "Supabase project did not respond normally"
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            echo "Query failed:"
+            cat response.json
             exit 1
           fi
